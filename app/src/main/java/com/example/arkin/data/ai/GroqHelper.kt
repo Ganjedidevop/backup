@@ -29,8 +29,8 @@ object GroqHelper {
     private const val GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
     
     // Verified currently supported models on Groq
-    const val PRIMARY_MODEL = "openai/gpt-oss-120b"
-    const val FALLBACK_MODEL = "openai/gpt-oss-20b"
+    const val PRIMARY_MODEL = "llama-3.3-70b-versatile"
+    const val FALLBACK_MODEL = "llama-3.1-8b-instant"
 
     /**
      * Optional Backend / Firebase Cloud Functions proxy URL for production.
@@ -141,16 +141,16 @@ object GroqHelper {
                     return@withContext fallbackResult
                 }
 
-                val qwenResult = executeCompletionsCall(
+                val gemmaResult = executeCompletionsCall(
                     userPrompt,
                     contextNotes,
                     conversationHistory,
-                    "qwen/qwen3.8-27b",
+                    "gemma2-9b-it",
                     apiKey,
                     proxyUrl
                 )
-                if (!qwenResult.isNullOrBlank()) {
-                    return@withContext qwenResult
+                if (!gemmaResult.isNullOrBlank()) {
+                    return@withContext gemmaResult
                 }
             }
         }
