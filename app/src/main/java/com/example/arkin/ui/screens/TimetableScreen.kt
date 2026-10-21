@@ -263,7 +263,6 @@ private fun AddClassDialog(
 ) {
     var subject by remember { mutableStateOf("") }
     var timeSlot by remember { mutableStateOf("10:00 AM - 11:30 AM") }
-    var room by remember { mutableStateOf("Room 302") }
     var colorKey by remember { mutableStateOf("purple") }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -318,22 +317,8 @@ private fun AddClassDialog(
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 12.dp)
-                        .testTag("class_timeslot_input")
-                )
-
-                OutlinedTextField(
-                    value = room,
-                    onValueChange = { room = it },
-                    label = { Text("Classroom / Lab") },
-                    placeholder = { Text("e.g. Lab 2, Hall 401") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
-                    modifier = Modifier
-                        .fillMaxWidth()
                         .padding(bottom = 18.dp)
-                        .testTag("class_room_input")
+                        .testTag("class_timeslot_input")
                 )
 
                 Row(
@@ -343,7 +328,7 @@ private fun AddClassDialog(
                     Button(
                         onClick = {
                             if (subject.isNotBlank()) {
-                                onAdd(subject, timeSlot, room, colorKey)
+                                onAdd(subject, timeSlot, "", colorKey)
                             }
                         },
                         shape = RoundedCornerShape(16.dp),

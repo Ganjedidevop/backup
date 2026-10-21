@@ -30,6 +30,7 @@ import com.example.arkin.model.DocUploadType
 import com.example.arkin.model.ParsedTimetableClass
 import com.example.arkin.util.DocumentTextExtractor
 import com.example.arkin.util.ExtractionResult
+import com.example.arkin.util.StudentProfileValidator
 import com.google.firebase.auth.FirebaseUser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -959,6 +960,8 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startDocumentAnalysis(customPrompt: String = "") {
+        if (isAnalyzingDoc.value) return // Prevent repeated taps
+
         val uri = selectedDocUri.value
         val docName = uploadedDocName.value ?: "Document.pdf"
 
@@ -1006,6 +1009,12 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                         Analyze the following extracted text from a class timetable document ("${extractedDoc.fileName}").
                         Parse each lecture or lab period into structured data.
                         
+                        IMPORTANT INSTRUCTIONS:
+                        - Extract ONLY genuine class lectures, tutorials, and practical lab sessions supported by the text.
+                        - DO NOT invent subjects, classes, days, or schedules not present in the document.
+                        - DO NOT include headings, lunch breaks, recess, intervals, or empty periods as classes.
+                        - Calculate class totals from successfully parsed entries only.
+                        
                         Required timetable fields for each class:
                         - "day": must be standard 3-letter day: "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"
                         - "subject": course name (e.g. "Computer Networks", "Database Systems")
@@ -1019,7 +1028,7 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                         
                         You MUST respond with valid JSON in this exact structure:
                         {
-                          "summary": "Clear student-focused Markdown summary of the timetable schedule, total classes per week, and recommended study gaps.",
+                          "summary": "Clear student-focused Markdown summary of the timetable schedule, total classes found, and days scheduled.",
                           "classes": [
                              {
                                "day": "Mon",
@@ -1044,14 +1053,27 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                         ---
                     """.trimIndent()
 
-                    val rawResponse = GroqHelper.askAssistant(prompt)
-                    val parsed = parseTimetableAiResponse(rawResponse)
-                    analyzedDocResult.value = parsed.first
-                    parsedClasses.value = parsed.second
-                    docProcessingState.value = DocProcessingState.REVIEWING
-                    docProcessingStatusText.value = "Analysis complete (${parsed.second.size} classes found)"
-                    isAnalyzingDoc.value = false
-                    showToast("Extracted ${parsed.second.size} classes! Review and confirm below 🗓️")
+                    val aiResult = GroqHelper.analyzeDocument(prompt)
+                    aiResult.onSuccess { rawResponse ->
+                        val parsed = parseTimetableAiResponse(rawResponse)
+                        analyzedDocResult.value = parsed.first
+                        parsedClasses.value = parsed.second
+                        docProcessingState.value = DocProcessingState.REVIEWING
+                        if (parsed.second.isNotEmpty()) {
+                            docProcessingStatusText.value = "Analysis complete (${parsed.second.size} classes found)"
+                            showToast("Extracted ${parsed.second.size} classes! Review and confirm below 🗓️")
+                        } else {
+                            docProcessingStatusText.value = "No classes found in document"
+                            showToast("No classes found. Please check document contents.")
+                        }
+                        isAnalyzingDoc.value = false
+                    }.onFailure { err ->
+                        docProcessingState.value = DocProcessingState.FAILED
+                        docProcessingError.value = "AI analysis failed: ${err.localizedMessage ?: err.message}. Tap to retry."
+                        docProcessingStatusText.value = "Analysis failed"
+                        isAnalyzingDoc.value = false
+                        showToast("AI analysis failed. Please check connection and retry.")
+                    }
                 }
 
                 DocUploadType.ASSIGNMENT -> {
@@ -1080,15 +1102,23 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                         $textContent
                     """.trimIndent()
 
-                    val rawResponse = GroqHelper.askAssistant(prompt)
-                    val parsed = parseAssignmentAiResponse(rawResponse)
-                    analyzedDocResult.value = parsed.first
-                    parsedAssignments.value = parsed.second
-                    parsedExamQuestions.value = parsed.third
-                    docProcessingState.value = DocProcessingState.REVIEWING
-                    docProcessingStatusText.value = "Assignment organized"
-                    isAnalyzingDoc.value = false
-                    showToast("Assignment deliverables organized! 📚")
+                    val aiResult = GroqHelper.analyzeDocument(prompt)
+                    aiResult.onSuccess { rawResponse ->
+                        val parsed = parseAssignmentAiResponse(rawResponse)
+                        analyzedDocResult.value = parsed.first
+                        parsedAssignments.value = parsed.second
+                        parsedExamQuestions.value = parsed.third
+                        docProcessingState.value = DocProcessingState.REVIEWING
+                        docProcessingStatusText.value = "Assignment organized"
+                        isAnalyzingDoc.value = false
+                        showToast("Assignment deliverables organized! 📚")
+                    }.onFailure { err ->
+                        docProcessingState.value = DocProcessingState.FAILED
+                        docProcessingError.value = "AI analysis failed: ${err.localizedMessage ?: err.message}"
+                        docProcessingStatusText.value = "Analysis failed"
+                        isAnalyzingDoc.value = false
+                        showToast("Analysis failed. Please retry.")
+                    }
                 }
 
                 DocUploadType.QUESTION_PAPER, DocUploadType.LECTURE_NOTE -> {
@@ -1104,34 +1134,48 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                         $textContent
                     """.trimIndent()
 
-                    val rawResponse = GroqHelper.askAssistant(prompt)
-                    analyzedDocResult.value = rawResponse
-                    docProcessingState.value = DocProcessingState.REVIEWING
-                    docProcessingStatusText.value = "Analysis complete"
-                    isAnalyzingDoc.value = false
-                    showToast("Document analyzed! 📝")
+                    val aiResult = GroqHelper.analyzeDocument(prompt)
+                    aiResult.onSuccess { rawResponse ->
+                        analyzedDocResult.value = rawResponse
+                        docProcessingState.value = DocProcessingState.REVIEWING
+                        docProcessingStatusText.value = "Analysis complete"
+                        isAnalyzingDoc.value = false
+                        showToast("Document analyzed! 📝")
+                    }.onFailure { err ->
+                        docProcessingState.value = DocProcessingState.FAILED
+                        docProcessingError.value = "AI analysis failed: ${err.localizedMessage ?: err.message}"
+                        docProcessingStatusText.value = "Analysis failed"
+                        isAnalyzingDoc.value = false
+                        showToast("Analysis failed. Please retry.")
+                    }
                 }
             }
         }
     }
 
-    private fun parseTimetableAiResponse(rawResponse: String): Pair<String, List<ParsedTimetableClass>> {
-        val cleanJson = rawResponse.trim()
-            .removePrefix("```json").removePrefix("```")
-            .removeSuffix("```").trim()
+    fun parseTimetableAiResponse(rawResponse: String): Pair<String, List<ParsedTimetableClass>> {
+        val trimmed = rawResponse.trim()
+        val firstBrace = trimmed.indexOf('{')
+        val lastBrace = trimmed.lastIndexOf('}')
 
-        val classesList = mutableListOf<ParsedTimetableClass>()
+        val cleanJson = if (firstBrace != -1 && lastBrace != -1 && lastBrace > firstBrace) {
+            trimmed.substring(firstBrace, lastBrace + 1)
+        } else {
+            trimmed.removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+        }
+
+        val rawClassesList = mutableListOf<ParsedTimetableClass>()
         var summaryText = ""
 
         try {
             val json = JSONObject(cleanJson)
-            summaryText = json.optString("summary", "")
+            summaryText = json.optString("summary", "").trim()
 
             val arr = json.optJSONArray("classes")
             if (arr != null) {
                 for (i in 0 until arr.length()) {
                     val obj = arr.getJSONObject(i)
-                    val dayRaw = obj.optString("day", "Mon")
+                    val dayRaw = obj.optString("day", "Mon").trim()
                     val dayFormatted = when (dayRaw.lowercase().take(3)) {
                         "mon" -> "Mon"
                         "tue" -> "Tue"
@@ -1142,35 +1186,68 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                         "sun" -> "Sun"
                         else -> "Mon"
                     }
-                    val subject = obj.optString("subject", "Class ${i + 1}")
-                    val timeSlot = obj.optString("timeSlot", "10:00 AM - 11:30 AM")
-                    val startTime = obj.optString("startTime", "")
-                    val endTime = obj.optString("endTime", "")
-                    val room = obj.optString("room", "Classroom")
-                    val faculty = obj.optString("faculty", "")
+                    val subject = obj.optString("subject", "").trim()
+                    val timeSlot = obj.optString("timeSlot", "10:00 AM - 11:30 AM").trim()
+                    val startTime = obj.optString("startTime", "").trim()
+                    val endTime = obj.optString("endTime", "").trim()
+                    val room = obj.optString("room", "").trim()
+                    val faculty = obj.optString("faculty", "").trim()
                     val isLab = obj.optBoolean("isLab", false)
                     val colorKey = obj.optString("colorKey", if (isLab) "teal" else "purple")
 
-                    classesList.add(
-                        ParsedTimetableClass(
-                            day = dayFormatted,
-                            subject = subject,
-                            timeSlot = timeSlot,
-                            room = room,
-                            faculty = faculty,
-                            colorKey = colorKey,
-                            startTime = startTime,
-                            endTime = endTime,
-                            isLab = isLab
+                    // Filter out breaks, headings, and non-class entries
+                    if (subject.isNotBlank() && !isBreakOrHeading(subject)) {
+                        rawClassesList.add(
+                            ParsedTimetableClass(
+                                day = dayFormatted,
+                                subject = subject,
+                                timeSlot = timeSlot,
+                                room = room,
+                                faculty = faculty,
+                                colorKey = colorKey,
+                                startTime = startTime,
+                                endTime = endTime,
+                                isLab = isLab
+                            )
                         )
-                    )
+                    }
                 }
             }
-        } catch (e: Exception) {
-            summaryText = rawResponse
+        } catch (_: Exception) {
+            summaryText = ""
         }
 
-        return Pair(summaryText.ifBlank { rawResponse }, classesList)
+        // Deduplicate classes (same day, subject, timeSlot)
+        val deduplicatedClasses = rawClassesList.distinctBy {
+            "${it.day.lowercase()}_${it.subject.lowercase().trim()}_${it.timeSlot.lowercase().trim()}"
+        }
+
+        val finalSummary = when {
+            deduplicatedClasses.isNotEmpty() && summaryText.isNotBlank() -> summaryText
+            deduplicatedClasses.isNotEmpty() -> {
+                val dayCount = deduplicatedClasses.map { it.day }.distinct().size
+                val daysList = deduplicatedClasses.map { it.day }.distinct().joinToString(", ")
+                "### 🗓️ Timetable Analysis\n\nIdentified **${deduplicatedClasses.size} classes** across **$dayCount days** ($daysList). Review the entries below and tap 'Apply Schedule' to save them to your schedule."
+            }
+            else -> {
+                "No timetable classes or schedule entries were identified in this document. Please verify that the document contains clear days of the week, subject names, and class timings."
+            }
+        }
+
+        return Pair(finalSummary, deduplicatedClasses)
+    }
+
+    private fun isBreakOrHeading(subject: String): Boolean {
+        val s = subject.trim().lowercase()
+        if (s.length < 2) return true
+        val nonClassKeywords = listOf(
+            "lunch", "break", "recess", "interval", "tea break", "free period",
+            "heading", "timetable", "schedule", "period", "class", "day", "time",
+            "mon", "tue", "wed", "thu", "fri", "sat", "sun", "monday", "tuesday",
+            "wednesday", "thursday", "friday", "saturday", "sunday"
+        )
+        return nonClassKeywords.any { s == it || s.startsWith("$it ") || s.endsWith(" $it") } ||
+                !subject.any { it.isLetter() }
     }
 
     private fun parseAssignmentAiResponse(rawResponse: String): Triple<String, List<Triple<String, String, String>>, List<String>> {
@@ -1322,6 +1399,47 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
     // Profile & Settings Actions
     fun updateProfile(name: String, major: String, email: String, college: String = "", course: String = "", semester: String = "", academicYear: String = "") {
         viewModelScope.launch {
+            // Validate College if provided
+            if (college.isNotBlank()) {
+                val colVal = StudentProfileValidator.validateCollege(college)
+                if (!colVal.isValid) {
+                    showToast(colVal.errorMessage ?: "Invalid college name")
+                    return@launch
+                }
+            }
+            // Validate Course / Program if provided
+            if (course.isNotBlank()) {
+                val progVal = StudentProfileValidator.validateProgram(course)
+                if (!progVal.isValid) {
+                    showToast(progVal.errorMessage ?: "Invalid program name")
+                    return@launch
+                }
+            }
+            // Validate Semester if provided
+            if (semester.isNotBlank()) {
+                val semVal = StudentProfileValidator.validateSemester(semester, course)
+                if (!semVal.isValid) {
+                    showToast(semVal.errorMessage ?: "Invalid semester")
+                    return@launch
+                }
+            }
+            // Validate Academic Year if provided
+            if (academicYear.isNotBlank()) {
+                val yearVal = StudentProfileValidator.validateAcademicYear(academicYear)
+                if (!yearVal.isValid) {
+                    showToast(yearVal.errorMessage ?: "Invalid academic year")
+                    return@launch
+                }
+            }
+            // Validate Major / Department if provided
+            if (major.isNotBlank()) {
+                val majorVal = StudentProfileValidator.validateMajor(major)
+                if (!majorVal.isValid) {
+                    showToast(majorVal.errorMessage ?: "Invalid department")
+                    return@launch
+                }
+            }
+
             val current = studentProfile.value ?: StudentProfileEntity()
             val updated = current.copy(
                 name = name.trim(),

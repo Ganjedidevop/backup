@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
@@ -29,6 +30,10 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.School
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.foundation.lazy.items
+import com.example.arkin.util.StudentProfileValidator
 import com.example.arkin.model.AppScreen
 import com.example.arkin.ui.components.SecurePinChangeDialog
 import androidx.compose.material3.Button
@@ -76,7 +81,6 @@ import com.example.ui.theme.ArkinPrimaryLight
 @Composable
 fun ProfileScreen(viewModel: ArkinViewModel) {
     val profile by viewModel.studentProfile.collectAsState()
-    val firebaseUser by viewModel.firebaseUser.collectAsState()
     var isEditProfileDialogOpen by remember { mutableStateOf(false) }
     var isChangePinDialogOpen by remember { mutableStateOf(false) }
     var showResetConfirmDialog by remember { mutableStateOf(false) }
@@ -175,70 +179,6 @@ fun ProfileScreen(viewModel: ArkinViewModel) {
                         fontWeight = FontWeight.SemiBold,
                         color = badgeText
                     )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            // Firebase Backend Connection Card
-            Card(
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = if (isDark) Color(0xFF78350F).copy(alpha = 0.4f) else Color(0xFFFEF3C7),
-                        modifier = Modifier.size(38.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text("🔥", fontSize = 18.sp)
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "Firebase Backend",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = if (firebaseUser != null) {
-                                    if (isDark) Color(0xFF14532D).copy(alpha = 0.6f) else Color(0xFFDCFCE7)
-                                } else {
-                                    if (isDark) MaterialTheme.colorScheme.surfaceVariant else Color(0xFFF3F4F6)
-                                }
-                            ) {
-                                Text(
-                                    text = if (firebaseUser != null) "ONLINE" else "GUEST",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (firebaseUser != null) {
-                                        if (isDark) Color(0xFF4ADE80) else Color(0xFF16A34A)
-                                    } else {
-                                        if (isDark) Color(0xFF9CA3AF) else Color(0xFF6B7280)
-                                    },
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                        Text(
-                            text = if (firebaseUser != null) "${firebaseUser?.email ?: firebaseUser?.uid} • arkin-22b82" else "arkin-22b82 • Firestore Active",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
             }
 
@@ -472,12 +412,60 @@ private fun EditProfileDialog(
     onSave: (name: String, major: String, email: String, college: String, course: String, semester: String, academicYear: String) -> Unit
 ) {
     var name by remember { mutableStateOf(currentName) }
-    var major by remember { mutableStateOf(currentMajor) }
     var email by remember { mutableStateOf(currentEmail) }
     var college by remember { mutableStateOf(currentCollege) }
-    var course by remember { mutableStateOf(currentCourse) }
-    var semester by remember { mutableStateOf(currentSemester) }
-    var academicYear by remember { mutableStateOf(currentAcademicYear) }
+
+    // Program selection
+    val isKnownProgram = StudentProfileValidator.COMMON_PROGRAMS.any { it.equals(currentCourse.trim(), ignoreCase = true) }
+    var selectedProgramOption by remember {
+        mutableStateOf(
+            if (isKnownProgram) {
+                StudentProfileValidator.COMMON_PROGRAMS.first { it.equals(currentCourse.trim(), ignoreCase = true) }
+            } else if (currentCourse.isNotBlank()) {
+                "Other"
+            } else {
+                "B.Tech"
+            }
+        )
+    }
+    var customProgram by remember {
+        mutableStateOf(if (!isKnownProgram && currentCourse.isNotBlank()) currentCourse.trim() else "")
+    }
+    var isProgramDropdownOpen by remember { mutableStateOf(false) }
+
+    val effectiveProgram = if (selectedProgramOption == "Other") customProgram else selectedProgramOption
+
+    // Semester selection
+    val maxSemesters = StudentProfileValidator.getMaxSemesters(effectiveProgram)
+    val parsedCurrentSem = StudentProfileValidator.extractSemesterNumber(currentSemester) ?: 1
+    val initialSemNumber = parsedCurrentSem.coerceIn(1, maxSemesters)
+    var selectedSemesterNumber by remember(maxSemesters) {
+        mutableStateOf(initialSemNumber)
+    }
+    var isSemesterDropdownOpen by remember { mutableStateOf(false) }
+
+    // Academic Year
+    val currentCalYear = remember { java.util.Calendar.getInstance().get(java.util.Calendar.YEAR) }
+    val defaultAcademicYear = remember(currentCalYear) { StudentProfileValidator.formatAcademicYear(currentCalYear) }
+    var academicYear by remember {
+        mutableStateOf(currentAcademicYear.ifBlank { defaultAcademicYear })
+    }
+
+    // Department / Specialization
+    var major by remember { mutableStateOf(currentMajor) }
+
+    // Has user touched or attempted to submit (to show inline errors)
+    var hasAttemptedSubmit by remember { mutableStateOf(false) }
+
+    // Validations
+    val collegeValidation = StudentProfileValidator.validateCollege(college)
+    val programValidation = StudentProfileValidator.validateProgram(effectiveProgram)
+    val semesterValidation = StudentProfileValidator.validateSemester("Semester $selectedSemesterNumber", effectiveProgram)
+    val yearValidation = StudentProfileValidator.validateAcademicYear(academicYear)
+    val majorValidation = StudentProfileValidator.validateMajor(major)
+
+    val isFormValid = collegeValidation.isValid && programValidation.isValid &&
+            semesterValidation.isValid && yearValidation.isValid && majorValidation.isValid
 
     val dialogScrollState = rememberScrollState()
 
@@ -511,6 +499,7 @@ private fun EditProfileDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
+                // Full Name
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -522,6 +511,7 @@ private fun EditProfileDialog(
                         .padding(bottom = 10.dp)
                 )
 
+                // Student Email
                 OutlinedTextField(
                     value = email,
                     onValueChange = { email = it },
@@ -533,72 +523,210 @@ private fun EditProfileDialog(
                         .padding(bottom = 10.dp)
                 )
 
+                // College / University with inline validation
+                val showCollegeError = hasAttemptedSubmit && !collegeValidation.isValid
                 OutlinedTextField(
                     value = college,
                     onValueChange = { college = it },
-                    label = { Text("College / University") },
+                    label = { Text("College / University *") },
+                    placeholder = { Text("e.g. St. Xavier's College, IIT Delhi") },
+                    isError = showCollegeError,
+                    supportingText = if (showCollegeError) {
+                        { Text(collegeValidation.errorMessage ?: "Invalid college", color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                    } else null,
                     shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = ArkinPrimary,
+                        errorBorderColor = MaterialTheme.colorScheme.error
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 10.dp)
+                        .padding(bottom = if (showCollegeError) 4.dp else 10.dp)
                 )
 
-                OutlinedTextField(
-                    value = course,
-                    onValueChange = { course = it },
-                    label = { Text("Degree / Program") },
-                    shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 10.dp)
-                )
+                // Degree / Program Selector
+                Box(modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                    OutlinedTextField(
+                        value = selectedProgramOption,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Degree / Program *") },
+                        trailingIcon = {
+                            IconButton(onClick = { isProgramDropdownOpen = true }) {
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Program")
+                            }
+                        },
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isProgramDropdownOpen = true }
+                    )
+                    DropdownMenu(
+                        expanded = isProgramDropdownOpen,
+                        onDismissRequest = { isProgramDropdownOpen = false }
+                    ) {
+                        (StudentProfileValidator.COMMON_PROGRAMS + "Other").forEach { prog ->
+                            DropdownMenuItem(
+                                text = { Text(prog) },
+                                onClick = {
+                                    selectedProgramOption = prog
+                                    isProgramDropdownOpen = false
+                                }
+                            )
+                        }
+                    }
+                }
 
+                // Custom Program Input when "Other" is selected
+                if (selectedProgramOption == "Other") {
+                    val showProgramError = hasAttemptedSubmit && !programValidation.isValid
+                    OutlinedTextField(
+                        value = customProgram,
+                        onValueChange = { customProgram = it },
+                        label = { Text("Specify Program Name *") },
+                        placeholder = { Text("e.g. MBBS, LLB, B.Des") },
+                        isError = showProgramError,
+                        supportingText = if (showProgramError) {
+                            { Text(programValidation.errorMessage ?: "Invalid program name", color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                        } else null,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = ArkinPrimary,
+                            errorBorderColor = MaterialTheme.colorScheme.error
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = if (showProgramError) 4.dp else 10.dp)
+                    )
+                }
+
+                // Row: Semester selector & Academic Year input
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedTextField(
-                        value = semester,
-                        onValueChange = { semester = it },
-                        label = { Text("Semester") },
-                        shape = RoundedCornerShape(16.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(bottom = 10.dp)
-                    )
+                    // Semester Selector
+                    Box(modifier = Modifier.weight(1f).padding(bottom = 10.dp)) {
+                        OutlinedTextField(
+                            value = "Semester $selectedSemesterNumber",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Semester *") },
+                            trailingIcon = {
+                                IconButton(onClick = { isSemesterDropdownOpen = true }) {
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Semester")
+                                }
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { isSemesterDropdownOpen = true }
+                        )
+                        DropdownMenu(
+                            expanded = isSemesterDropdownOpen,
+                            onDismissRequest = { isSemesterDropdownOpen = false }
+                        ) {
+                            (1..maxSemesters).forEach { semNum ->
+                                DropdownMenuItem(
+                                    text = { Text("Semester $semNum") },
+                                    onClick = {
+                                        selectedSemesterNumber = semNum
+                                        isSemesterDropdownOpen = false
+                                    }
+                                )
+                            }
+                        }
+                    }
 
+                    // Academic Year with validation
+                    val showYearError = hasAttemptedSubmit && !yearValidation.isValid
                     OutlinedTextField(
                         value = academicYear,
                         onValueChange = { academicYear = it },
-                        label = { Text("Academic Year") },
+                        label = { Text("Academic Year *") },
+                        placeholder = { Text("2026-2027") },
+                        isError = showYearError,
+                        supportingText = if (showYearError) {
+                            { Text(yearValidation.errorMessage ?: "e.g. 2026-2027", color = MaterialTheme.colorScheme.error, fontSize = 10.sp) }
+                        } else null,
                         shape = RoundedCornerShape(16.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = ArkinPrimary,
+                            errorBorderColor = MaterialTheme.colorScheme.error
+                        ),
                         modifier = Modifier
                             .weight(1f)
-                            .padding(bottom = 10.dp)
+                            .padding(bottom = if (showYearError) 4.dp else 10.dp)
                     )
                 }
 
+                // Department / Specialization
+                val showMajorError = hasAttemptedSubmit && !majorValidation.isValid
                 OutlinedTextField(
                     value = major,
                     onValueChange = { major = it },
-                    label = { Text("Department / Specialization") },
+                    label = { Text("Department / Specialization *") },
+                    placeholder = { Text("e.g. Computer Science") },
+                    isError = showMajorError,
+                    supportingText = if (showMajorError) {
+                        { Text(majorValidation.errorMessage ?: "Invalid department", color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                    } else null,
                     shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = ArkinPrimary,
+                        errorBorderColor = MaterialTheme.colorScheme.error
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 16.dp)
+                        .padding(bottom = 6.dp)
                 )
+
+                // Department Suggestions Chips
+                val departmentSuggestions = remember(effectiveProgram) {
+                    StudentProfileValidator.getDepartmentOptions(effectiveProgram).take(4)
+                }
+                androidx.compose.foundation.lazy.LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(bottom = 16.dp)
+                ) {
+                    items(departmentSuggestions) { suggestion ->
+                        Surface(
+                            onClick = { major = suggestion },
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                        ) {
+                            Text(
+                                text = suggestion,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
                     Button(
-                        onClick = { onSave(name, major, email, college, course, semester, academicYear) },
+                        onClick = {
+                            hasAttemptedSubmit = true
+                            if (isFormValid) {
+                                onSave(
+                                    name.trim(),
+                                    major.trim(),
+                                    email.trim(),
+                                    college.trim(),
+                                    effectiveProgram.trim(),
+                                    "Semester $selectedSemesterNumber",
+                                    academicYear.trim()
+                                )
+                            }
+                        },
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = ArkinPrimary)
                     ) {
@@ -609,3 +737,4 @@ private fun EditProfileDialog(
         }
     }
 }
+

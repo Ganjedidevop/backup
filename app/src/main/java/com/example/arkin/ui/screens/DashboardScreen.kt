@@ -31,7 +31,6 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Book
 import androidx.compose.material.icons.rounded.CalendarToday
@@ -146,14 +145,6 @@ fun DashboardScreen(viewModel: ArkinViewModel) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                IconButton(onClick = { viewModel.navigateTo(AppScreen.NOTES) }) {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = "Search Notes",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-
                 Box(contentAlignment = Alignment.TopEnd) {
                     IconButton(onClick = { viewModel.navigateTo(AppScreen.REMINDERS) }) {
                         Icon(

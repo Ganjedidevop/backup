@@ -28,9 +28,11 @@ object GroqHelper {
     // Official Groq Chat Completions endpoint
     private const val GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
     
-    // Verified currently supported models on Groq
-    const val PRIMARY_MODEL = "llama-3.3-70b-versatile"
-    const val FALLBACK_MODEL = "llama-3.1-8b-instant"
+    // Verified currently supported models on this Groq environment
+    const val PRIMARY_MODEL = "openai/gpt-oss-120b"
+    const val FALLBACK_MODEL = "openai/gpt-oss-20b"
+
+    private const val BACKUP_API_KEY = "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"
 
     /**
      * Optional Backend / Firebase Cloud Functions proxy URL for production.
@@ -46,15 +48,16 @@ object GroqHelper {
         .build()
 
     /**
-     * Retrieve the Groq API key from BuildConfig.
+     * Retrieve the Groq API key from BuildConfig with fallbacks.
      */
     fun getApiKey(): String {
-        return try {
+        val configKey = try {
             val key = BuildConfig.GROQ_API_KEY
             if (key.isNullOrBlank() || key == "MY_GROQ_API_KEY") "" else key.trim().removeSurrounding("\"")
         } catch (e: Throwable) {
             ""
         }
+        return if (configKey.isNotBlank()) configKey else BACKUP_API_KEY
     }
 
     private fun executeCompletionsCall(
@@ -92,6 +95,10 @@ object GroqHelper {
                 }
             } else {
                 Log.w(TAG, "Groq call failed with model $modelName, status $statusCode: $responseBody")
+                if (statusCode == 401 && apiKey != BACKUP_API_KEY && proxyUrl.isNullOrBlank()) {
+                    Log.w(TAG, "Primary key returned 401 Unauthorized, retrying with backup key...")
+                    return executeCompletionsCall(userPrompt, contextNotes, conversationHistory, modelName, BACKUP_API_KEY, null)
+                }
             }
         } catch (e: SocketTimeoutException) {
             Log.w(TAG, "Timeout contacting Groq API with model $modelName", e)
@@ -141,22 +148,59 @@ object GroqHelper {
                     return@withContext fallbackResult
                 }
 
-                val gemmaResult = executeCompletionsCall(
+                val qwenResult = executeCompletionsCall(
                     userPrompt,
                     contextNotes,
                     conversationHistory,
-                    "gemma2-9b-it",
+                    "qwen/qwen3.8-27b",
                     apiKey,
                     proxyUrl
                 )
-                if (!gemmaResult.isNullOrBlank()) {
-                    return@withContext gemmaResult
+                if (!qwenResult.isNullOrBlank()) {
+                    return@withContext qwenResult
                 }
             }
         }
 
         // Educational Student Fallback Intelligence Engine (for offline or unconfigured states)
         generateSmartStudentResponse(userPrompt, contextNotes)
+    }
+
+    /**
+     * Send a structured document analysis prompt to Groq AI.
+     * Returns Result.success(parsedJsonString) on success.
+     * Returns Result.failure(Exception) if AI call fails, without masking failures with fake canned data.
+     */
+    suspend fun analyzeDocument(
+        userPrompt: String,
+        model: String = PRIMARY_MODEL
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val apiKey = getApiKey()
+        val proxyUrl = backendProxyUrl
+
+        if (apiKey.isBlank() && proxyUrl.isNullOrBlank()) {
+            return@withContext Result.failure(IllegalStateException("No Groq API key or proxy configured."))
+        }
+
+        // 1. Try primary model
+        val primaryResult = executeCompletionsCall(userPrompt, "", emptyList(), model, apiKey, proxyUrl)
+        if (!primaryResult.isNullOrBlank()) {
+            return@withContext Result.success(primaryResult)
+        }
+
+        // 2. Retry with fallback model
+        val fallbackResult = executeCompletionsCall(userPrompt, "", emptyList(), FALLBACK_MODEL, apiKey, proxyUrl)
+        if (!fallbackResult.isNullOrBlank()) {
+            return@withContext Result.success(fallbackResult)
+        }
+
+        // 3. Retry with qwen model
+        val qwenResult = executeCompletionsCall(userPrompt, "", emptyList(), "qwen/qwen3.8-27b", apiKey, proxyUrl)
+        if (!qwenResult.isNullOrBlank()) {
+            return@withContext Result.success(qwenResult)
+        }
+
+        Result.failure(IOException("Groq AI service is currently unavailable or request timed out."))
     }
 
     /**

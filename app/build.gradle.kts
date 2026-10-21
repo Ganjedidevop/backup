@@ -4,10 +4,8 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
-  alias(libs.plugins.secrets)
   alias(libs.plugins.google.services)
 }
-
 
 android {
   namespace = "com.example"
@@ -21,6 +19,7 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    buildConfigField("String", "GROQ_API_KEY", "\"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\"")
   }
 
   signingConfigs {
@@ -57,14 +56,7 @@ android {
   }
 }
 
-// Configure the Secrets Gradle Plugin to use .env and .env.example files
-// to match the convention used in Web projects.
-secrets {
-  propertiesFileName = ".env"
-  defaultPropertiesFileName = ".env.example"
-  ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
-  ignoreList.add("GOOGLE_WEB_CLIENT_ID")
-}
+// API key is injected directly via buildConfigField in defaultConfig
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 

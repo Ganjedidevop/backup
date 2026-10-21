@@ -52,6 +52,7 @@ import com.example.arkin.data.model.NoteEntity
 import com.example.arkin.ui.components.AppHeader
 import com.example.arkin.ui.components.ConfirmationDialog
 import com.example.arkin.ui.components.NoteCard
+import com.example.arkin.ui.components.NoteDetailDialog
 import com.example.arkin.viewmodel.ArkinViewModel
 import com.example.ui.theme.ArkinPrimary
 
@@ -61,6 +62,7 @@ fun NotesScreen(viewModel: ArkinViewModel) {
     val searchQuery by viewModel.noteSearchQuery.collectAsState()
     val selectedTag by viewModel.selectedNoteTag.collectAsState()
     var noteToDelete by remember { mutableStateOf<NoteEntity?>(null) }
+    var noteToRead by remember { mutableStateOf<NoteEntity?>(null) }
 
     val tags = listOf("All", "Study", "Personal", "Project", "Exam")
 
@@ -209,7 +211,7 @@ fun NotesScreen(viewModel: ArkinViewModel) {
                 items(notes, key = { it.id }) { note ->
                     NoteCard(
                         note = note,
-                        onNoteClick = { viewModel.openEditNoteDialog(note) },
+                        onNoteClick = { noteToRead = note },
                         onDeleteClick = { noteToDelete = note },
                         onAiSummarizeClick = { viewModel.summarizeNoteWithAi(note) },
                         onAttachmentUpdated = { newPath ->
@@ -219,6 +221,23 @@ fun NotesScreen(viewModel: ArkinViewModel) {
                 }
             }
         }
+    }
+
+    // Dedicated Note Read View
+    noteToRead?.let { currentNote ->
+        val latestNote = notes.find { it.id == currentNote.id } ?: currentNote
+        NoteDetailDialog(
+            note = latestNote,
+            onDismiss = { noteToRead = null },
+            onEdit = {
+                val n = latestNote
+                noteToRead = null
+                viewModel.openEditNoteDialog(n)
+            },
+            onAttachmentUpdated = { newPath ->
+                viewModel.updateNoteAttachmentUri(latestNote, newPath)
+            }
+        )
     }
 
     noteToDelete?.let { note ->

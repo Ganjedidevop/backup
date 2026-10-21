@@ -97,6 +97,12 @@ object DocumentTextExtractor {
         try {
             onProgress("Reading document...", 0.1f)
 
+            if (!isSupportedFile(fileName, mimeType)) {
+                return@withContext ExtractionResult.Failure(
+                    "Unsupported file format for '$fileName'. Please select a PDF, image (JPG, PNG), or text document."
+                )
+            }
+
             when {
                 mimeType == "application/pdf" || fileName.endsWith(".pdf", ignoreCase = true) -> {
                     extractPdfText(context, uri, fileName, fileSize, onProgress)
@@ -108,12 +114,9 @@ object DocumentTextExtractor {
                     extractPlainText(context, uri, fileName, fileSize, mimeType, onProgress)
                 }
                 else -> {
-                    // Try PDF first, if fails try plain text
-                    try {
-                        extractPdfText(context, uri, fileName, fileSize, onProgress)
-                    } catch (_: Exception) {
-                        extractPlainText(context, uri, fileName, fileSize, mimeType, onProgress)
-                    }
+                    ExtractionResult.Failure(
+                        "Unsupported file format for '$fileName'. Please select a PDF, image (JPG, PNG), or text document."
+                    )
                 }
             }
         } catch (e: Exception) {
@@ -215,8 +218,8 @@ object DocumentTextExtractor {
             val visionText = recognizer.process(inputImage).await()
             val text = visionText.text.trim()
 
-            if (text.isBlank()) {
-                ExtractionResult.Failure("No readable text found in this photo. Please upload a clearer photo with legible writing.")
+            if (text.isBlank() || !text.any { it.isLetterOrDigit() }) {
+                ExtractionResult.Failure("No readable text found in '$fileName'. Please upload a clearer photo with legible writing.")
             } else {
                 onProgress("Text recognition complete", 1.0f)
                 ExtractionResult.Success(
@@ -248,10 +251,10 @@ object DocumentTextExtractor {
             BufferedReader(InputStreamReader(stream, StandardCharsets.UTF_8)).use { reader ->
                 reader.readText()
             }
-        } ?: return ExtractionResult.Failure("Unable to read text stream.")
+        } ?: return ExtractionResult.Failure("Unable to read text stream from '$fileName'.")
 
-        if (text.isBlank()) {
-            return ExtractionResult.Failure("Text document is empty.")
+        if (text.isBlank() || !text.any { it.isLetterOrDigit() }) {
+            return ExtractionResult.Failure("Text document '$fileName' is empty or contains no readable characters.")
         }
 
         onProgress("Document ready", 1.0f)
@@ -283,6 +286,14 @@ object DocumentTextExtractor {
         } else {
             context.contentResolver.openFileDescriptor(uri, "r")
         }
+    }
+
+    fun isSupportedFile(fileName: String, mimeType: String): Boolean {
+        val lower = fileName.lowercase()
+        val m = mimeType.lowercase()
+        return m == "application/pdf" || lower.endsWith(".pdf") ||
+                m.startsWith("image/") || isImageFile(fileName) ||
+                m.startsWith("text/") || lower.endsWith(".txt") || lower.endsWith(".csv")
     }
 
     private fun isImageFile(name: String): Boolean {
