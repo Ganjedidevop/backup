@@ -61,10 +61,15 @@ data class ParsedTimetableClass(
     val day: String,
     val subject: String,
     val timeSlot: String,
-    val room: String,
+    val room: String = "",
     val faculty: String = "",
     val colorKey: String = "purple",
     val startTime: String = "",
     val endTime: String = "",
-    val isLab: Boolean = false
+    val isLab: Boolean = false,
+    val date: String = "",
+    val subjectCode: String = "",
+    val courseType: String = "",
+    val isExam: Boolean = false
 )
+

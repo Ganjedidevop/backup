@@ -845,14 +845,29 @@ private fun ClassReviewItem(
             Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
+                if (item.isExam) {
+                    Text(
+                        text = if (item.date.isNotBlank()) "🎯 EXAM • ${item.date}" else "🎯 EXAM",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFDC2626)
+                    )
+                }
                 Text(
-                    text = item.subject,
+                    text = if (item.subjectCode.isNotBlank() && !item.subject.contains(item.subjectCode))
+                        "${item.subjectCode}: ${item.subject}"
+                    else item.subject,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
+                val subtitleText = when {
+                    item.isExam && item.date.isNotBlank() -> "${item.timeSlot} • Date: ${item.date}${if (item.courseType.isNotBlank()) " • " + item.courseType else ""}"
+                    item.room.isNotBlank() -> "${item.timeSlot} • ${item.room}${if (item.faculty.isNotBlank()) " • " + item.faculty else ""}"
+                    else -> item.timeSlot
+                }
                 Text(
-                    text = "${item.timeSlot} • ${item.room}${if (item.faculty.isNotBlank()) " • " + item.faculty else ""}",
+                    text = subtitleText,
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -67,17 +67,20 @@ data class HomeworkEntity(
 data class TimetableEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val dayOfWeek: String, // Mon, Tue, Wed, Thu, Fri, Sat
+    val dayOfWeek: String, // Mon, Tue, Wed, Thu, Fri, Sat, Sun
     val subject: String,
     val timeSlot: String,
     val startTime: String = "",
     val endTime: String = "",
-    val room: String,
+    val room: String = "",
     val facultyName: String = "",
     val requiredMaterials: String = "", // e.g. "Practical Lab Record", "Graph Sheet"
     val isLab: Boolean = false,
     val reminderMinutesBefore: Int = 15,
-    val colorKey: String = "purple"
+    val colorKey: String = "purple",
+    val examDate: String = "",
+    val courseCode: String = "",
+    val isExam: Boolean = false
 )
 
 @Entity(tableName = "reminders")

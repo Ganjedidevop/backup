@@ -158,7 +158,131 @@ class TimetableProcessingTest {
         assertFalse(DocumentTextExtractor.isSupportedFile("app.exe", "application/octet-stream"))
     }
 
-    private fun parseTimetableFromResponse(rawResponse: String): Pair<String, List<ParsedTimetableClass>> {
+    @Test
+    fun testExamTimetableExtraction_validationFixture() {
+        val aiResponse = """
+            ```json
+            {
+              "summary": "Extracted 4 examination papers for End-Semester BCA Exams.",
+              "classes": [
+                {
+                  "date": "23/10/2026",
+                  "timeSlot": "10:30 AM - 12:30 PM",
+                  "startTime": "10:30 AM",
+                  "endTime": "12:30 PM",
+                  "subjectCode": "BCAMJ501",
+                  "subject": "Understanding the Operating Systems",
+                  "isExam": true,
+                  "colorKey": "purple"
+                },
+                {
+                  "date": "24/10/2026",
+                  "timeSlot": "10:30 AM - 12:30 PM",
+                  "startTime": "10:30 AM",
+                  "endTime": "12:30 PM",
+                  "subjectCode": "BCAMJ502",
+                  "subject": "Advanced Database Management Systems",
+                  "isExam": true,
+                  "colorKey": "purple"
+                },
+                {
+                  "date": "26/10/2026",
+                  "timeSlot": "10:30 AM - 12:30 PM",
+                  "startTime": "10:30 AM",
+                  "endTime": "12:30 PM",
+                  "subjectCode": "BCAMN501",
+                  "subject": "Software Engineering",
+                  "isExam": true,
+                  "colorKey": "teal"
+                },
+                {
+                  "date": "27/10/2026",
+                  "timeSlot": "10:30 AM - 12:30 PM",
+                  "startTime": "10:30 AM",
+                  "endTime": "12:30 PM",
+                  "subjectCode": "BCAMN502",
+                  "subject": "Operational Research",
+                  "isExam": true,
+                  "colorKey": "teal"
+                }
+              ]
+            }
+            ```
+        """.trimIndent()
+
+        val (summary, exams) = parseTimetableFromResponse(aiResponse)
+
+        assertEquals(4, exams.size)
+
+        // 1. 23/10/2026, 10:30 AM–12:30 PM, BCAMJ501, Understanding the Operating Systems (Friday)
+        assertEquals("23/10/2026", exams[0].date)
+        assertEquals("BCAMJ501", exams[0].subjectCode)
+        assertEquals("Understanding the Operating Systems", exams[0].subject)
+        assertEquals("10:30 AM - 12:30 PM", exams[0].timeSlot)
+        assertEquals("Fri", exams[0].day)
+        assertTrue(exams[0].isExam)
+
+        // 2. 24/10/2026, 10:30 AM–12:30 PM, BCAMJ502, Advanced Database Management Systems (Saturday)
+        assertEquals("24/10/2026", exams[1].date)
+        assertEquals("BCAMJ502", exams[1].subjectCode)
+        assertEquals("Advanced Database Management Systems", exams[1].subject)
+        assertEquals("10:30 AM - 12:30 PM", exams[1].timeSlot)
+        assertEquals("Sat", exams[1].day)
+        assertTrue(exams[1].isExam)
+
+        // 3. 26/10/2026, 10:30 AM–12:30 PM, BCAMN501, Software Engineering (Monday)
+        assertEquals("26/10/2026", exams[2].date)
+        assertEquals("BCAMN501", exams[2].subjectCode)
+        assertEquals("Software Engineering", exams[2].subject)
+        assertEquals("10:30 AM - 12:30 PM", exams[2].timeSlot)
+        assertEquals("Mon", exams[2].day)
+        assertTrue(exams[2].isExam)
+
+        // 4. 27/10/2026, 10:30 AM–12:30 PM, BCAMN502, Operational Research (Tuesday)
+        assertEquals("27/10/2026", exams[3].date)
+        assertEquals("BCAMN502", exams[3].subjectCode)
+        assertEquals("Operational Research", exams[3].subject)
+        assertEquals("10:30 AM - 12:30 PM", exams[3].timeSlot)
+        assertEquals("Tue", exams[3].day)
+        assertTrue(exams[3].isExam)
+    }
+
+    @Test
+    fun testExamTimetableExtraction_rawTextFallback() {
+        val rawOcrText = """
+            BCA 5th Semester Examination Date Sheet October 2026
+            1. 23/10/2026, 10:30 AM–12:30 PM, BCAMJ501, Understanding the Operating Systems.
+            2. 24/10/2026, 10:30 AM–12:30 PM, BCAMJ502, Advanced Database Management Systems.
+            3. 26/10/2026, 10:30 AM–12:30 PM, BCAMN501, Software Engineering.
+            4. 27/10/2026, 10:30 AM–12:30 PM, BCAMN502, Operational Research.
+        """.trimIndent()
+
+        // When AI fails or returns empty, the raw OCR text parser must dynamically extract all 4 entries
+        val (summary, exams) = parseTimetableFromResponse("", rawDocumentText = rawOcrText)
+
+        assertEquals(4, exams.size)
+        assertEquals("23/10/2026", exams[0].date)
+        assertEquals("BCAMJ501", exams[0].subjectCode)
+        assertTrue(exams[0].subject.contains("Operating Systems"))
+        assertTrue(exams[0].isExam)
+
+        assertEquals("24/10/2026", exams[1].date)
+        assertEquals("BCAMJ502", exams[1].subjectCode)
+        assertTrue(exams[1].subject.contains("Database Management Systems"))
+        assertTrue(exams[1].isExam)
+
+        assertEquals("26/10/2026", exams[2].date)
+        assertEquals("BCAMN501", exams[2].subjectCode)
+        assertTrue(exams[2].subject.contains("Software Engineering"))
+        assertTrue(exams[2].isExam)
+
+        assertEquals("27/10/2026", exams[3].date)
+        assertEquals("BCAMN502", exams[3].subjectCode)
+        assertTrue(exams[3].subject.contains("Operational Research"))
+        assertTrue(exams[3].isExam)
+    }
+
+    private fun parseTimetableFromResponse(rawResponse: String, rawDocumentText: String = ""): Pair<String, List<ParsedTimetableClass>> {
         val trimmed = rawResponse.trim()
         val firstBrace = trimmed.indexOf('{')
         val lastBrace = trimmed.lastIndexOf('}')
@@ -176,27 +300,38 @@ class TimetableProcessingTest {
             val json = JSONObject(cleanJson)
             summaryText = json.optString("summary", "").trim()
 
-            val arr = json.optJSONArray("classes")
+            val arr = json.optJSONArray("classes") ?: json.optJSONArray("exams") ?: json.optJSONArray("schedule")
             if (arr != null) {
                 for (i in 0 until arr.length()) {
                     val obj = arr.getJSONObject(i)
-                    val dayRaw = obj.optString("day", "Mon").trim()
-                    val dayFormatted = when (dayRaw.lowercase().take(3)) {
-                        "mon" -> "Mon"
-                        "tue" -> "Tue"
-                        "wed" -> "Wed"
-                        "thu" -> "Thu"
-                        "fri" -> "Fri"
-                        "sat" -> "Sat"
-                        "sun" -> "Sun"
+                    val dateRaw = obj.optString("date", "").trim()
+                    val subjectCode = obj.optString("subjectCode", obj.optString("code", "")).trim()
+                    val courseType = obj.optString("courseType", "").trim()
+                    val isExam = obj.optBoolean("isExam", dateRaw.isNotBlank() || subjectCode.isNotBlank())
+
+                    val dayRaw = obj.optString("day", "").trim()
+                    val dayFormatted = when {
+                        dateRaw.isNotBlank() -> deriveDayOfWeek(dateRaw)
+                        dayRaw.isNotBlank() -> when (dayRaw.lowercase().take(3)) {
+                            "mon" -> "Mon"
+                            "tue" -> "Tue"
+                            "wed" -> "Wed"
+                            "thu" -> "Thu"
+                            "fri" -> "Fri"
+                            "sat" -> "Sat"
+                            "sun" -> "Sun"
+                            else -> "Mon"
+                        }
                         else -> "Mon"
                     }
                     val subject = obj.optString("subject", "").trim()
-                    val timeSlot = obj.optString("timeSlot", "10:00 AM - 11:30 AM").trim()
+                    val timeSlot = obj.optString("timeSlot", "10:00 AM - 11:30 AM").trim().replace("–", "-").replace("—", "-")
+                    val startTime = obj.optString("startTime", "").trim()
+                    val endTime = obj.optString("endTime", "").trim()
                     val room = obj.optString("room", "").trim()
                     val faculty = obj.optString("faculty", "").trim()
                     val isLab = obj.optBoolean("isLab", false)
-                    val colorKey = obj.optString("colorKey", if (isLab) "teal" else "purple")
+                    val colorKey = obj.optString("colorKey", if (isExam) "purple" else if (isLab) "teal" else "purple")
 
                     if (subject.isNotBlank() && !isBreakOrHeading(subject)) {
                         rawClassesList.add(
@@ -204,10 +339,16 @@ class TimetableProcessingTest {
                                 day = dayFormatted,
                                 subject = subject,
                                 timeSlot = timeSlot,
+                                startTime = startTime,
+                                endTime = endTime,
                                 room = room,
                                 faculty = faculty,
                                 colorKey = colorKey,
-                                isLab = isLab
+                                isLab = isLab,
+                                date = dateRaw,
+                                subjectCode = subjectCode,
+                                courseType = courseType,
+                                isExam = isExam
                             )
                         )
                     }
@@ -218,13 +359,22 @@ class TimetableProcessingTest {
         }
 
         val deduplicatedClasses = rawClassesList.distinctBy {
-            "${it.day.lowercase()}_${it.subject.lowercase().trim()}_${it.timeSlot.lowercase().trim()}"
+            "${it.date}_${it.day.lowercase()}_${it.subject.lowercase().trim()}_${it.timeSlot.lowercase().trim()}"
+        }
+
+        if (deduplicatedClasses.isEmpty() && rawDocumentText.isNotBlank()) {
+            return parseTimetableFromDocumentText(rawDocumentText)
         }
 
         val finalSummary = when {
             deduplicatedClasses.isNotEmpty() && summaryText.isNotBlank() -> summaryText
             deduplicatedClasses.isNotEmpty() -> {
-                "Found ${deduplicatedClasses.size} classes."
+                val examsCount = deduplicatedClasses.count { it.isExam }
+                if (examsCount > 0) {
+                    "Found $examsCount examination schedule entries."
+                } else {
+                    "Found ${deduplicatedClasses.size} classes."
+                }
             }
             else -> {
                 "No timetable classes or schedule entries were identified in this document. Please verify that the document contains clear days of the week, subject names, and class timings."
@@ -232,6 +382,104 @@ class TimetableProcessingTest {
         }
 
         return Pair(finalSummary, deduplicatedClasses)
+    }
+
+    private fun parseTimetableFromDocumentText(rawText: String): Pair<String, List<ParsedTimetableClass>> {
+        val extractedClasses = mutableListOf<ParsedTimetableClass>()
+        if (rawText.isBlank()) {
+            return Pair("No timetable classes or schedule entries were identified in this document.", emptyList())
+        }
+
+        val dateRegex = Regex("""\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b""")
+        val timeRegex = Regex("""(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\s*[-–—to]+\s*\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?)""")
+        val courseCodeRegex = Regex("""\b([A-Z]{3,}[A-Z0-9_-]{2,})\b""")
+
+        val lines = rawText.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+        for (line in lines) {
+            val dateMatch = dateRegex.find(line)
+            val timeMatch = timeRegex.find(line)
+            val codeMatch = courseCodeRegex.find(line)
+
+            if (dateMatch != null && (timeMatch != null || codeMatch != null)) {
+                val dateStr = dateMatch.groupValues[1]
+                val timeStr = timeMatch?.groupValues?.get(1)?.replace("–", "-")?.replace("—", "-") ?: "10:30 AM - 12:30 PM"
+                val codeStr = codeMatch?.groupValues?.get(1) ?: ""
+
+                var cleanSubject = line
+                    .replace(dateStr, "")
+                    .replace(timeStr, "")
+                if (codeStr.isNotBlank()) {
+                    cleanSubject = cleanSubject.replace(codeStr, "")
+                }
+                cleanSubject = cleanSubject
+                    .replace(Regex("""^[,\s\-–—\.]+|[,\s\-–—\.]+$"""), "")
+                    .replace(Regex("""^\d+[\.\)]\s*"""), "")
+                    .trim()
+
+                if (cleanSubject.isBlank() && codeStr.isNotBlank()) {
+                    cleanSubject = codeStr
+                }
+
+                if (cleanSubject.isNotBlank() && !isBreakOrHeading(cleanSubject)) {
+                    val times = timeStr.split(Regex("[-–—]+")).map { it.trim() }
+                    val startTime = times.getOrNull(0) ?: ""
+                    val endTime = times.getOrNull(1) ?: ""
+                    val dayStr = deriveDayOfWeek(dateStr)
+
+                    extractedClasses.add(
+                        ParsedTimetableClass(
+                            day = dayStr,
+                            date = dateStr,
+                            subjectCode = codeStr,
+                            subject = cleanSubject,
+                            timeSlot = timeStr,
+                            startTime = startTime,
+                            endTime = endTime,
+                            isExam = true,
+                            colorKey = if (codeStr.contains("MJ") || codeStr.contains("Major")) "purple" else "teal"
+                        )
+                    )
+                }
+            }
+        }
+
+        val deduplicated = extractedClasses.distinctBy {
+            "${it.date}_${it.day.lowercase()}_${it.subject.lowercase().trim()}_${it.timeSlot.lowercase().trim()}"
+        }
+
+        val summary = if (deduplicated.isNotEmpty()) {
+            "Found ${deduplicated.size} examination entries."
+        } else {
+            "No timetable classes or schedule entries were identified in this document."
+        }
+
+        return Pair(summary, deduplicated)
+    }
+
+    private fun deriveDayOfWeek(dateStr: String): String {
+        val clean = dateStr.trim().replace(".", "/").replace("-", "/")
+        val formats = listOf("dd/MM/yyyy", "d/M/yyyy", "yyyy/MM/dd")
+        for (fmt in formats) {
+            try {
+                val sdf = java.text.SimpleDateFormat(fmt, java.util.Locale.US).apply { isLenient = false }
+                val d = sdf.parse(clean)
+                if (d != null) {
+                    val cal = java.util.Calendar.getInstance().apply { time = d }
+                    return when (cal.get(java.util.Calendar.DAY_OF_WEEK)) {
+                        java.util.Calendar.MONDAY -> "Mon"
+                        java.util.Calendar.TUESDAY -> "Tue"
+                        java.util.Calendar.WEDNESDAY -> "Wed"
+                        java.util.Calendar.THURSDAY -> "Thu"
+                        java.util.Calendar.FRIDAY -> "Fri"
+                        java.util.Calendar.SATURDAY -> "Sat"
+                        java.util.Calendar.SUNDAY -> "Sun"
+                        else -> "Mon"
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return "Mon"
     }
 
     private fun isBreakOrHeading(subject: String): Boolean {

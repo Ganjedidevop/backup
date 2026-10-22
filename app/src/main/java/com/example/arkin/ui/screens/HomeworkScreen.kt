@@ -34,6 +34,12 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.rounded.Book
+import androidx.compose.material.icons.rounded.CalendarToday
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -477,12 +483,57 @@ private fun ManualAddAssignmentDialog(
 ) {
     val context = LocalContext.current
     var title by remember { mutableStateOf("") }
+    var titleError by remember { mutableStateOf<String?>(null) }
     var subject by remember { mutableStateOf("") }
+    var subjectError by remember { mutableStateOf<String?>(null) }
     var description by remember { mutableStateOf("") }
     var teacher by remember { mutableStateOf("") }
-    var dueDate by remember { mutableStateOf("Tomorrow") }
-    var dueTime by remember { mutableStateOf("11:59 PM") }
+
+    val calendar = remember {
+        Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_YEAR, 1)
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 0)
+        }
+    }
+    val dateFormatter = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
+    val timeFormatter = remember { SimpleDateFormat("hh:mm a", Locale.getDefault()) }
+
+    var dueDate by remember { mutableStateOf(dateFormatter.format(calendar.time)) }
+    var dueTime by remember { mutableStateOf(timeFormatter.format(calendar.time)) }
     var priority by remember { mutableStateOf("Medium") }
+
+    val datePicker = remember {
+        DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                calendar.set(Calendar.YEAR, year)
+                calendar.set(Calendar.MONTH, month)
+                calendar.set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                dueDate = dateFormatter.format(calendar.time)
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        ).apply {
+            datePicker.minDate = System.currentTimeMillis()
+        }
+    }
+
+    val timePicker = remember {
+        TimePickerDialog(
+            context,
+            { _, hourOfDay, minute ->
+                calendar.set(Calendar.HOUR_OF_DAY, hourOfDay)
+                calendar.set(Calendar.MINUTE, minute)
+                dueTime = timeFormatter.format(calendar.time)
+            },
+            calendar.get(Calendar.HOUR_OF_DAY),
+            calendar.get(Calendar.MINUTE),
+            false
+        )
+    }
 
     var attachedUri by remember { mutableStateOf(initialUri) }
     var attachedFileName by remember {
@@ -616,9 +667,14 @@ private fun ManualAddAssignmentDialog(
 
                 OutlinedTextField(
                     value = subject,
-                    onValueChange = { subject = it },
+                    onValueChange = {
+                        subject = it
+                        if (it.isNotBlank()) subjectError = null
+                    },
                     label = { Text("Course / Subject *") },
                     placeholder = { Text("e.g. Database Systems, OS, Math") },
+                    isError = subjectError != null,
+                    supportingText = subjectError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
                     singleLine = true,
                     shape = RoundedCornerShape(16.dp),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
@@ -629,9 +685,14 @@ private fun ManualAddAssignmentDialog(
 
                 OutlinedTextField(
                     value = title,
-                    onValueChange = { title = it },
+                    onValueChange = {
+                        title = it
+                        if (it.isNotBlank()) titleError = null
+                    },
                     label = { Text("Assignment Title *") },
                     placeholder = { Text("e.g. Relational Algebra Problem Set 3") },
+                    isError = titleError != null,
+                    supportingText = titleError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
                     singleLine = true,
                     shape = RoundedCornerShape(16.dp),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
@@ -670,25 +731,61 @@ private fun ManualAddAssignmentDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    OutlinedTextField(
-                        value = dueDate,
-                        onValueChange = { dueDate = it },
-                        label = { Text("Due Date *") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(16.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
-                        modifier = Modifier.weight(1f)
-                    )
+                    Box(modifier = Modifier.weight(1f)) {
+                        OutlinedTextField(
+                            value = dueDate,
+                            onValueChange = { },
+                            readOnly = true,
+                            label = { Text("Due Date *") },
+                            placeholder = { Text("Select Date") },
+                            singleLine = true,
+                            trailingIcon = {
+                                IconButton(onClick = { datePicker.show() }) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.CalendarToday,
+                                        contentDescription = "Select Due Date",
+                                        tint = ArkinPrimary
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { datePicker.show() }
+                        )
+                    }
 
-                    OutlinedTextField(
-                        value = dueTime,
-                        onValueChange = { dueTime = it },
-                        label = { Text("Due Time *") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(16.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
-                        modifier = Modifier.weight(1f)
-                    )
+                    Box(modifier = Modifier.weight(1f)) {
+                        OutlinedTextField(
+                            value = dueTime,
+                            onValueChange = { },
+                            readOnly = true,
+                            label = { Text("Due Time *") },
+                            placeholder = { Text("Select Time") },
+                            singleLine = true,
+                            trailingIcon = {
+                                IconButton(onClick = { timePicker.show() }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Schedule,
+                                        contentDescription = "Select Due Time",
+                                        tint = ArkinPrimary
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { timePicker.show() }
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(18.dp))
@@ -699,20 +796,38 @@ private fun ManualAddAssignmentDialog(
                 ) {
                     Button(
                         onClick = {
-                            if (subject.isNotBlank() && title.isNotBlank()) {
-                                onAdd(
-                                    subject,
-                                    title,
-                                    dueDate,
-                                    dueTime,
-                                    description,
-                                    teacher,
-                                    priority,
-                                    attachedUri?.toString(),
-                                    attachedFileName,
-                                    attachedFileSize
-                                )
+                            var hasError = false
+                            if (subject.isBlank()) {
+                                subjectError = "Course/Subject is required"
+                                hasError = true
                             }
+                            if (title.isBlank()) {
+                                titleError = "Assignment title is required"
+                                hasError = true
+                            }
+                            if (hasError) return@Button
+
+                            if (calendar.timeInMillis <= System.currentTimeMillis()) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Please select a future deadline date and time",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                                return@Button
+                            }
+
+                            onAdd(
+                                subject.trim(),
+                                title.trim(),
+                                dueDate,
+                                dueTime,
+                                description.trim(),
+                                teacher.trim(),
+                                priority,
+                                attachedUri?.toString(),
+                                attachedFileName,
+                                attachedFileSize
+                            )
                         },
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = ArkinPrimary)

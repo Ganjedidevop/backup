@@ -206,25 +206,66 @@ object GroqHelper {
     /**
      * Break down and solve homework/assignment questions step-by-step.
      */
+    /**
+     * Break down and solve homework/assignment questions step-by-step using Groq AI.
+     * Does not mask AI failure with fake canned responses or unrelated topics.
+     */
+    suspend fun solveAssignmentQuestionResult(
+        assignmentTitle: String,
+        question: String,
+        style: String = "Simple & Structured",
+        documentContext: String = ""
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val apiKey = getApiKey()
+        val proxyUrl = backendProxyUrl
+
+        if (apiKey.isBlank() && proxyUrl.isNullOrBlank()) {
+            return@withContext Result.failure(IllegalStateException("No Groq AI API key configured."))
+        }
+
+        val prompt = """
+            You are assisting a university student with their homework assignment titled "$assignmentTitle".
+            Please provide a comprehensive, step-by-step solution and explanation for the following question:
+            "$question"
+            ${if (documentContext.isNotBlank()) "Attached Assignment Document Context:\n$documentContext" else ""}
+            Style required: $style.
+            Format clearly with:
+            1. Core Concept & Formula / Definition
+            2. Step-by-Step Derivation / Solution (for DBMS questions, provide exact SQL queries, relational algebra, functional dependencies, normalization (1NF, 2NF, 3NF, BCNF), transaction ACID properties, or ER diagrams as appropriate)
+            3. Final Answer Summary
+            4. Common Pitfalls to Avoid in Examinations.
+            Label the solution clearly as an editable draft.
+            IMPORTANT: Focus strictly on answering the specific questions from the student's assignment. Do not provide unrelated examples or canned placeholders.
+        """.trimIndent()
+
+        // 1. Try primary model
+        val primary = executeCompletionsCall(prompt, "", emptyList(), PRIMARY_MODEL, apiKey, proxyUrl)
+        if (!primary.isNullOrBlank()) {
+            return@withContext Result.success(primary)
+        }
+
+        // 2. Try fallback model
+        val fallback = executeCompletionsCall(prompt, "", emptyList(), FALLBACK_MODEL, apiKey, proxyUrl)
+        if (!fallback.isNullOrBlank()) {
+            return@withContext Result.success(fallback)
+        }
+
+        // 3. Try qwen model
+        val qwen = executeCompletionsCall(prompt, "", emptyList(), "qwen/qwen3.8-27b", apiKey, proxyUrl)
+        if (!qwen.isNullOrBlank()) {
+            return@withContext Result.success(qwen)
+        }
+
+        Result.failure(IOException("AI service is currently unavailable or request timed out. Please check your connection and retry."))
+    }
+
     suspend fun solveAssignmentQuestion(
         assignmentTitle: String,
         question: String,
         style: String = "Simple & Structured"
     ): String = withContext(Dispatchers.IO) {
-        val prompt = """
-            You are assisting a university student with their homework assignment titled "$assignmentTitle".
-            Please provide a comprehensive, step-by-step solution and explanation for the following question:
-            "$question"
-            Style required: $style.
-            Format clearly with:
-            1. Core Concept & Formula
-            2. Step-by-Step Derivation / Solution
-            3. Final Answer Summary
-            4. Common Pitfalls to Avoid in Examinations.
-            Label the solution clearly as an editable draft.
-        """.trimIndent()
-
-        askAssistant(prompt)
+        val res = solveAssignmentQuestionResult(assignmentTitle, question, style)
+        res.getOrElse { "Failed to generate AI solution: ${it.message}. Please check your connection and tap retry." }
     }
 
     /**

@@ -114,6 +114,9 @@ object BackupManager {
                     put("requiredMaterials", tt.requiredMaterials)
                     put("isLab", tt.isLab)
                     put("colorKey", tt.colorKey)
+                    put("examDate", tt.examDate)
+                    put("courseCode", tt.courseCode)
+                    put("isExam", tt.isExam)
                 })
             }
             put("timetable", ttArr)
@@ -280,7 +283,10 @@ object BackupManager {
                             facultyName = obj.optString("facultyName", ""),
                             requiredMaterials = obj.optString("requiredMaterials", ""),
                             isLab = obj.optBoolean("isLab", false),
-                            colorKey = obj.optString("colorKey", "purple")
+                            colorKey = obj.optString("colorKey", "purple"),
+                            examDate = obj.optString("examDate", ""),
+                            courseCode = obj.optString("courseCode", ""),
+                            isExam = obj.optBoolean("isExam", false)
                         )
                     )
                 }

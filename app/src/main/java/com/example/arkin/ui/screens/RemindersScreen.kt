@@ -20,6 +20,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.CalendarToday
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.clickable
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -177,9 +185,52 @@ private fun AddReminderDialog(
     onDismiss: () -> Unit,
     onAdd: (title: String, dueText: String, iconKey: String, colorKey: String) -> Unit
 ) {
+    val context = LocalContext.current
+    val calendar = remember {
+        Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_YEAR, 1)
+            set(Calendar.HOUR_OF_DAY, 10)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+        }
+    }
+    val dateTimeFormatter = remember { SimpleDateFormat("dd/MM/yyyy, hh:mm a", Locale.getDefault()) }
+    var dueText by remember { mutableStateOf(dateTimeFormatter.format(calendar.time)) }
     var title by remember { mutableStateOf("") }
-    var dueText by remember { mutableStateOf("Tomorrow, 10:00 AM") }
+    var titleError by remember { mutableStateOf<String?>(null) }
     var iconKey by remember { mutableStateOf("bell") }
+
+    val timePicker = remember {
+        TimePickerDialog(
+            context,
+            { _, hourOfDay, minute ->
+                calendar.set(Calendar.HOUR_OF_DAY, hourOfDay)
+                calendar.set(Calendar.MINUTE, minute)
+                calendar.set(Calendar.SECOND, 0)
+                dueText = dateTimeFormatter.format(calendar.time)
+            },
+            calendar.get(Calendar.HOUR_OF_DAY),
+            calendar.get(Calendar.MINUTE),
+            false
+        )
+    }
+
+    val datePicker = remember {
+        DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                calendar.set(Calendar.YEAR, year)
+                calendar.set(Calendar.MONTH, month)
+                calendar.set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                timePicker.show()
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        ).apply {
+            datePicker.minDate = System.currentTimeMillis()
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -211,9 +262,14 @@ private fun AddReminderDialog(
 
                 OutlinedTextField(
                     value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Reminder Title") },
+                    onValueChange = {
+                        title = it
+                        if (it.isNotBlank()) titleError = null
+                    },
+                    label = { Text("Reminder Title *") },
                     placeholder = { Text("e.g. Return library book, Fee payment") },
+                    isError = titleError != null,
+                    supportingText = titleError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
                     singleLine = true,
                     shape = RoundedCornerShape(16.dp),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
@@ -223,19 +279,39 @@ private fun AddReminderDialog(
                         .testTag("reminder_title_input")
                 )
 
-                OutlinedTextField(
-                    value = dueText,
-                    onValueChange = { dueText = it },
-                    label = { Text("When") },
-                    placeholder = { Text("e.g. In 2 days, Friday 5 PM") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 18.dp)
-                        .testTag("reminder_time_input")
-                )
+                ) {
+                    OutlinedTextField(
+                        value = dueText,
+                        onValueChange = { },
+                        readOnly = true,
+                        label = { Text("When (Date & Time) *") },
+                        placeholder = { Text("Tap to select date & time") },
+                        singleLine = true,
+                        trailingIcon = {
+                            IconButton(onClick = { datePicker.show() }) {
+                                Icon(
+                                    imageVector = Icons.Rounded.CalendarToday,
+                                    contentDescription = "Select Date & Time",
+                                    tint = ArkinPrimary
+                                )
+                            }
+                        },
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("reminder_time_input")
+                    )
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable { datePicker.show() }
+                    )
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -243,9 +319,19 @@ private fun AddReminderDialog(
                 ) {
                     Button(
                         onClick = {
-                            if (title.isNotBlank()) {
-                                onAdd(title, dueText, iconKey, "yellow")
+                            if (title.isBlank()) {
+                                titleError = "Please enter a reminder title"
+                                return@Button
                             }
+                            if (calendar.timeInMillis <= System.currentTimeMillis()) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Please select a future date and time",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                                return@Button
+                            }
+                            onAdd(title.trim(), dueText, iconKey, "yellow")
                         },
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = ArkinPrimary),

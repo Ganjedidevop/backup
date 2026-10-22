@@ -507,6 +507,19 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                 FirestoreManager.saveHomework(hw.copy(id = id))
                 FirestoreManager.saveTask(plannerTask.copy(id = taskId))
             }
+
+            // Schedule local deadline notification
+            try {
+                com.example.arkin.util.AlarmScheduler.scheduleHomeworkNotification(
+                    getApplication(),
+                    id,
+                    title,
+                    subject,
+                    dueDate,
+                    dueTime
+                )
+            } catch (_: Exception) {}
+
             showToast("Homework added and synced to study planner")
         }
     }
@@ -516,10 +529,26 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
             val (savedPath, name) = com.example.arkin.util.FileViewerHelper.persistAttachment(getApplication(), uri)
             val file = java.io.File(savedPath)
             val sizeStr = DocumentTextExtractor.formatFileSize(if (file.exists()) file.length() else 0L)
+
+            // Extract questions from attachment if not already present
+            var questionsJson: String? = hw.extractedQuestionsJson
+            try {
+                val extraction = DocumentTextExtractor.extractText(getApplication(), uri)
+                if (extraction is ExtractionResult.Success && extraction.document.text.isNotBlank()) {
+                    val qList = extractQuestionsFromText(extraction.document.text)
+                    if (qList.isNotEmpty()) {
+                        val arr = org.json.JSONArray()
+                        qList.forEach { arr.put(it) }
+                        questionsJson = arr.toString()
+                    }
+                }
+            } catch (_: Exception) {}
+
             val updated = hw.copy(
                 attachmentUri = savedPath,
                 attachmentName = name,
-                attachmentSize = sizeStr
+                attachmentSize = sizeStr,
+                extractedQuestionsJson = questionsJson
             )
             homeworkDao.updateHomework(updated)
             selectedAssignment.value = updated
@@ -555,6 +584,12 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
             if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
                 FirestoreManager.saveHomework(updated)
             }
+            if (updated.isDone) {
+                try {
+                    com.example.arkin.util.AlarmScheduler.cancelNotification(getApplication(), hw.id)
+                    com.example.arkin.util.AlarmScheduler.cancelNotification(getApplication(), hw.id + 100000)
+                } catch (_: Exception) {}
+            }
             showToast("Status updated to $newStatus")
         }
     }
@@ -562,15 +597,52 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
     fun solveAssignmentQuestionWithAi(hw: HomeworkEntity, question: String) {
         _isAiLoading.value = true
         viewModelScope.launch {
-            val answer = GroqHelper.solveAssignmentQuestion(hw.title, question)
-            val updated = hw.copy(aiDraftAnswer = answer)
-            homeworkDao.updateHomework(updated)
-            selectedAssignment.value = updated
-            if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
-                FirestoreManager.saveHomework(updated)
+            var effectiveQuestion = question.trim()
+            var docContext = ""
+
+            // If question is a generic title/description placeholder, resolve actual questions
+            if (effectiveQuestion.startsWith("Assignment topic:") && hw.description.isBlank()) {
+                val questionsList = hw.extractedQuestionsJson?.let {
+                    try {
+                        val arr = org.json.JSONArray(it)
+                        List(arr.length()) { i -> arr.getString(i) }
+                    } catch (_: Exception) { emptyList() }
+                } ?: emptyList()
+
+                if (questionsList.isNotEmpty()) {
+                    effectiveQuestion = questionsList.mapIndexed { idx, q -> "Question ${idx + 1}: $q" }.joinToString("\n\n")
+                } else if (!hw.attachmentUri.isNullOrBlank()) {
+                    try {
+                        val uri = android.net.Uri.parse(hw.attachmentUri)
+                        val extraction = DocumentTextExtractor.extractText(getApplication(), uri)
+                        if (extraction is ExtractionResult.Success && extraction.document.text.isNotBlank()) {
+                            docContext = extraction.document.text
+                            effectiveQuestion = "Please provide complete step-by-step solutions for all questions in this assignment document:\n" + extraction.document.text.take(3000)
+                        }
+                    } catch (_: Exception) {}
+                }
             }
-            _isAiLoading.value = false
-            showToast("AI Solution generated!")
+
+            if (effectiveQuestion.isBlank() || (effectiveQuestion.startsWith("Assignment topic:") && hw.description.isBlank() && docContext.isBlank())) {
+                _isAiLoading.value = false
+                showToast("Please enter a question or attach an assignment document.")
+                return@launch
+            }
+
+            val result = GroqHelper.solveAssignmentQuestionResult(hw.title, effectiveQuestion, documentContext = docContext)
+            result.onSuccess { answer ->
+                val updated = hw.copy(aiDraftAnswer = answer)
+                homeworkDao.updateHomework(updated)
+                selectedAssignment.value = updated
+                if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
+                    FirestoreManager.saveHomework(updated)
+                }
+                _isAiLoading.value = false
+                showToast("AI Solution generated! ✨")
+            }.onFailure { err ->
+                _isAiLoading.value = false
+                showToast("AI generation failed: ${err.localizedMessage ?: err.message}. Tap to retry.")
+            }
         }
     }
 
@@ -599,6 +671,12 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
             if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
                 FirestoreManager.saveHomework(updated)
             }
+            if (updated.isDone) {
+                try {
+                    com.example.arkin.util.AlarmScheduler.cancelNotification(getApplication(), hw.id)
+                    com.example.arkin.util.AlarmScheduler.cancelNotification(getApplication(), hw.id + 100000)
+                } catch (_: Exception) {}
+            }
             showToast(if (updated.isDone) "Marked as done!" else "Marked as pending")
         }
     }
@@ -612,6 +690,10 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
             if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
                 FirestoreManager.deleteHomework(hw.id)
             }
+            try {
+                com.example.arkin.util.AlarmScheduler.cancelNotification(getApplication(), hw.id)
+                com.example.arkin.util.AlarmScheduler.cancelNotification(getApplication(), hw.id + 100000)
+            } catch (_: Exception) {}
             showToast("Homework removed")
         }
     }
@@ -656,6 +738,10 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
             if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
                 FirestoreManager.deleteTimetableClass(entry.id)
             }
+            try {
+                com.example.arkin.util.AlarmScheduler.cancelNotification(getApplication(), entry.id)
+                com.example.arkin.util.AlarmScheduler.cancelNotification(getApplication(), entry.id + 200000)
+            } catch (_: Exception) {}
             showToast("Class removed")
         }
     }
@@ -681,6 +767,17 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
             if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
                 FirestoreManager.saveReminder(reminder.copy(id = id))
             }
+
+            // Schedule local alarm notification
+            try {
+                com.example.arkin.util.AlarmScheduler.scheduleReminderNotification(
+                    getApplication(),
+                    id,
+                    title.trim(),
+                    dueText.trim()
+                )
+            } catch (_: Exception) {}
+
             showToast("Reminder created")
         }
     }
@@ -691,6 +788,9 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
             if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
                 FirestoreManager.deleteReminder(reminder.id)
             }
+            try {
+                com.example.arkin.util.AlarmScheduler.cancelNotification(getApplication(), reminder.id)
+            } catch (_: Exception) {}
             showToast("Reminder dismissed")
         }
     }
@@ -1006,39 +1106,48 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                 DocUploadType.TIMETABLE -> {
                     val prompt = """
                         You are Arkin AI, an expert academic schedule and timetable assistant for college students.
-                        Analyze the following extracted text from a class timetable document ("${extractedDoc.fileName}").
-                        Parse each lecture or lab period into structured data.
+                        Analyze the following extracted text from a timetable or examination document ("${extractedDoc.fileName}").
+                        
+                        Support BOTH timetable types:
+                        A. Regular class timetable: recurring classes assigned to weekdays (Mon, Tue, Wed, Thu, Fri, Sat, Sun).
+                        B. Examination timetable: individual events tied to specific calendar dates (e.g. DD/MM/YYYY or DD-MM-YYYY), subject codes (e.g. BCAMJ501), subject names, course types (e.g. Major, Minor, Core), and exam timings (e.g. 10:30 AM - 12:30 PM).
                         
                         IMPORTANT INSTRUCTIONS:
-                        - Extract ONLY genuine class lectures, tutorials, and practical lab sessions supported by the text.
-                        - DO NOT invent subjects, classes, days, or schedules not present in the document.
-                        - DO NOT include headings, lunch breaks, recess, intervals, or empty periods as classes.
-                        - Calculate class totals from successfully parsed entries only.
-                        
-                        Required timetable fields for each class:
-                        - "day": must be standard 3-letter day: "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"
-                        - "subject": course name (e.g. "Computer Networks", "Database Systems")
-                        - "timeSlot": time interval string (e.g. "09:00 AM - 10:30 AM")
-                        - "startTime": start time (e.g. "09:00 AM")
-                        - "endTime": end time (e.g. "10:30 AM")
-                        - "room": classroom or lab (e.g. "Room 304", "Lab 2", "Hall B")
-                        - "faculty": teacher/professor name if present
-                        - "isLab": boolean (true if practical or lab)
-                        - "colorKey": one of "purple", "blue", "teal", "orange", "pink"
+                        - Extract ALL valid class lectures, practical labs, and examination events supported by the text.
+                        - For examination entries:
+                          * Extract exam date into "date" (e.g. "23/10/2026").
+                          * Extract 3-letter weekday of the exam date into "day" (e.g. "Fri" for 23/10/2026, "Sat" for 24/10/2026, "Mon" for 26/10/2026, "Tue" for 27/10/2026).
+                          * Extract subject code into "subjectCode" (e.g. "BCAMJ501").
+                          * Extract subject name into "subject" (e.g. "Understanding the Operating Systems").
+                          * Extract course type into "courseType" (e.g. "Major", "Minor", "Core").
+                          * Set "isExam": true.
+                          * Room or classroom is optional for examinations (can be empty string "").
+                        - For regular classes:
+                          * "day": must be standard 3-letter day: "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"
+                          * "subject": course name
+                          * "timeSlot": time interval string (e.g. "09:00 AM - 10:30 AM")
+                          * "isLab": boolean (true if practical or lab)
+                          * Set "isExam": false, "date": "".
+                        - DO NOT invent subjects or events not present in the document.
+                        - DO NOT include lunch breaks or general document headers as classes.
                         
                         You MUST respond with valid JSON in this exact structure:
                         {
-                          "summary": "Clear student-focused Markdown summary of the timetable schedule, total classes found, and days scheduled.",
+                          "summary": "Clear student-focused Markdown summary of the timetable or examination schedule, total entries found, and dates/days scheduled.",
                           "classes": [
                              {
-                               "day": "Mon",
-                               "subject": "Distributed Systems",
-                               "timeSlot": "09:00 AM - 10:30 AM",
-                               "startTime": "09:00 AM",
-                               "endTime": "10:30 AM",
-                               "room": "Room 401",
-                               "faculty": "Prof. Rao",
+                               "day": "Fri",
+                               "date": "23/10/2026",
+                               "subjectCode": "BCAMJ501",
+                               "subject": "Understanding the Operating Systems",
+                               "courseType": "Major",
+                               "timeSlot": "10:30 AM - 12:30 PM",
+                               "startTime": "10:30 AM",
+                               "endTime": "12:30 PM",
+                               "room": "",
+                               "faculty": "",
                                "isLab": false,
+                               "isExam": true,
                                "colorKey": "purple"
                              }
                           ]
@@ -1055,24 +1164,35 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
 
                     val aiResult = GroqHelper.analyzeDocument(prompt)
                     aiResult.onSuccess { rawResponse ->
-                        val parsed = parseTimetableAiResponse(rawResponse)
+                        val parsed = parseTimetableAiResponse(rawResponse, textContent)
                         analyzedDocResult.value = parsed.first
                         parsedClasses.value = parsed.second
                         docProcessingState.value = DocProcessingState.REVIEWING
                         if (parsed.second.isNotEmpty()) {
-                            docProcessingStatusText.value = "Analysis complete (${parsed.second.size} classes found)"
-                            showToast("Extracted ${parsed.second.size} classes! Review and confirm below 🗓️")
+                            docProcessingStatusText.value = "Analysis complete (${parsed.second.size} entries found)"
+                            showToast("Extracted ${parsed.second.size} schedule entries! Review and confirm below 🗓️")
                         } else {
-                            docProcessingStatusText.value = "No classes found in document"
-                            showToast("No classes found. Please check document contents.")
+                            docProcessingStatusText.value = "No timetable entries found"
+                            showToast("No timetable entries found. Please verify document.")
                         }
                         isAnalyzingDoc.value = false
                     }.onFailure { err ->
-                        docProcessingState.value = DocProcessingState.FAILED
-                        docProcessingError.value = "AI analysis failed: ${err.localizedMessage ?: err.message}. Tap to retry."
-                        docProcessingStatusText.value = "Analysis failed"
-                        isAnalyzingDoc.value = false
-                        showToast("AI analysis failed. Please check connection and retry.")
+                        // Fallback: Parse dynamic entries directly from extracted document text
+                        val localParsed = parseTimetableFromDocumentText(textContent)
+                        if (localParsed.second.isNotEmpty()) {
+                            analyzedDocResult.value = localParsed.first
+                            parsedClasses.value = localParsed.second
+                            docProcessingState.value = DocProcessingState.REVIEWING
+                            docProcessingStatusText.value = "Analysis complete (${localParsed.second.size} entries found)"
+                            showToast("Extracted ${localParsed.second.size} schedule entries! Review and confirm below 🗓️")
+                            isAnalyzingDoc.value = false
+                        } else {
+                            docProcessingState.value = DocProcessingState.FAILED
+                            docProcessingError.value = "AI analysis failed: ${err.localizedMessage ?: err.message}. Tap to retry."
+                            docProcessingStatusText.value = "Analysis failed"
+                            isAnalyzingDoc.value = false
+                            showToast("AI analysis failed. Please check connection and retry.")
+                        }
                     }
                 }
 
@@ -1153,7 +1273,130 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun parseTimetableAiResponse(rawResponse: String): Pair<String, List<ParsedTimetableClass>> {
+    fun deriveDayOfWeek(dateStr: String): String {
+        val clean = dateStr.trim().replace(".", "/").replace("-", "/")
+        val formats = listOf("dd/MM/yyyy", "d/M/yyyy", "yyyy/MM/dd")
+        for (fmt in formats) {
+            try {
+                val sdf = java.text.SimpleDateFormat(fmt, java.util.Locale.US).apply { isLenient = false }
+                val d = sdf.parse(clean)
+                if (d != null) {
+                    val cal = java.util.Calendar.getInstance().apply { time = d }
+                    return when (cal.get(java.util.Calendar.DAY_OF_WEEK)) {
+                        java.util.Calendar.MONDAY -> "Mon"
+                        java.util.Calendar.TUESDAY -> "Tue"
+                        java.util.Calendar.WEDNESDAY -> "Wed"
+                        java.util.Calendar.THURSDAY -> "Thu"
+                        java.util.Calendar.FRIDAY -> "Fri"
+                        java.util.Calendar.SATURDAY -> "Sat"
+                        java.util.Calendar.SUNDAY -> "Sun"
+                        else -> "Mon"
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return "Mon"
+    }
+
+    fun extractQuestionsFromText(rawText: String): List<String> {
+        if (rawText.isBlank()) return emptyList()
+        val questions = mutableListOf<String>()
+
+        val pattern = Regex("""(?m)^(?:\d+[\.\)]|Q(?:uestion)?\s*\d+[\.:\)])\s*(.+)$""")
+        val matches = pattern.findAll(rawText).toList()
+
+        if (matches.isNotEmpty()) {
+            for (m in matches) {
+                val q = m.groupValues[1].trim()
+                if (q.length > 5) {
+                    questions.add(q)
+                }
+            }
+        }
+
+        if (questions.isEmpty()) {
+            val lines = rawText.lines().map { it.trim() }.filter { it.endsWith("?") && it.length > 10 }
+            questions.addAll(lines)
+        }
+
+        return questions.distinct()
+    }
+
+    fun parseTimetableFromDocumentText(rawText: String): Pair<String, List<ParsedTimetableClass>> {
+        val extractedClasses = mutableListOf<ParsedTimetableClass>()
+        if (rawText.isBlank()) {
+            return Pair("No timetable classes or schedule entries were identified in this document. Please verify that the document contains clear days of the week, subject names, and class timings.", emptyList())
+        }
+
+        val dateRegex = Regex("""\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b""")
+        val timeRegex = Regex("""(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\s*[-–—to]+\s*\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?)""")
+        val courseCodeRegex = Regex("""\b([A-Z]{3,}[A-Z0-9_-]{2,})\b""")
+
+        val lines = rawText.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+        for (line in lines) {
+            val dateMatch = dateRegex.find(line)
+            val timeMatch = timeRegex.find(line)
+            val codeMatch = courseCodeRegex.find(line)
+
+            if (dateMatch != null && (timeMatch != null || codeMatch != null)) {
+                val dateStr = dateMatch.groupValues[1]
+                val timeStr = timeMatch?.groupValues?.get(1)?.replace("–", "-")?.replace("—", "-") ?: "10:30 AM - 12:30 PM"
+                val codeStr = codeMatch?.groupValues?.get(1) ?: ""
+
+                var cleanSubject = line
+                    .replace(dateStr, "")
+                    .replace(timeStr, "")
+                if (codeStr.isNotBlank()) {
+                    cleanSubject = cleanSubject.replace(codeStr, "")
+                }
+                cleanSubject = cleanSubject
+                    .replace(Regex("""^[,\s\-–—\.]+|[,\s\-–—\.]+$"""), "")
+                    .replace(Regex("""^\d+[\.\)]\s*"""), "")
+                    .trim()
+
+                if (cleanSubject.isBlank() && codeStr.isNotBlank()) {
+                    cleanSubject = codeStr
+                }
+
+                if (cleanSubject.isNotBlank() && !isBreakOrHeading(cleanSubject)) {
+                    val times = timeStr.split(Regex("[-–—]+")).map { it.trim() }
+                    val startTime = times.getOrNull(0) ?: ""
+                    val endTime = times.getOrNull(1) ?: ""
+                    val dayStr = deriveDayOfWeek(dateStr)
+
+                    extractedClasses.add(
+                        ParsedTimetableClass(
+                            day = dayStr,
+                            date = dateStr,
+                            subjectCode = codeStr,
+                            subject = cleanSubject,
+                            timeSlot = timeStr,
+                            startTime = startTime,
+                            endTime = endTime,
+                            isExam = true,
+                            colorKey = if (codeStr.contains("MJ") || codeStr.contains("Major")) "purple" else "teal"
+                        )
+                    )
+                }
+            }
+        }
+
+        val deduplicated = extractedClasses.distinctBy {
+            "${it.date}_${it.day.lowercase()}_${it.subject.lowercase().trim()}_${it.timeSlot.lowercase().trim()}"
+        }
+
+        val summary = if (deduplicated.isNotEmpty()) {
+            val datesList = deduplicated.mapNotNull { if (it.date.isNotBlank()) it.date else null }.distinct().joinToString(", ")
+            "### 🗓️ Examination Schedule\n\nIdentified **${deduplicated.size} examination events** on: $datesList.\n\nReview the entries below and tap 'Apply Schedule' to save them to your timetable."
+        } else {
+            "No timetable classes or schedule entries were identified in this document. Please verify that the document contains clear days of the week, subject names, and class timings."
+        }
+
+        return Pair(summary, deduplicated)
+    }
+
+    fun parseTimetableAiResponse(rawResponse: String, rawDocumentText: String = ""): Pair<String, List<ParsedTimetableClass>> {
         val trimmed = rawResponse.trim()
         val firstBrace = trimmed.indexOf('{')
         val lastBrace = trimmed.lastIndexOf('}')
@@ -1171,31 +1414,40 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
             val json = JSONObject(cleanJson)
             summaryText = json.optString("summary", "").trim()
 
-            val arr = json.optJSONArray("classes")
+            val arr = json.optJSONArray("classes") ?: json.optJSONArray("exams") ?: json.optJSONArray("schedule")
             if (arr != null) {
                 for (i in 0 until arr.length()) {
                     val obj = arr.getJSONObject(i)
-                    val dayRaw = obj.optString("day", "Mon").trim()
-                    val dayFormatted = when (dayRaw.lowercase().take(3)) {
-                        "mon" -> "Mon"
-                        "tue" -> "Tue"
-                        "wed" -> "Wed"
-                        "thu" -> "Thu"
-                        "fri" -> "Fri"
-                        "sat" -> "Sat"
-                        "sun" -> "Sun"
+                    val dateRaw = obj.optString("date", "").trim()
+                    val subjectCode = obj.optString("subjectCode", obj.optString("code", "")).trim()
+                    val courseType = obj.optString("courseType", "").trim()
+                    val isExam = obj.optBoolean("isExam", dateRaw.isNotBlank() || subjectCode.isNotBlank())
+
+                    val dayRaw = obj.optString("day", "").trim()
+                    val dayFormatted = when {
+                        dateRaw.isNotBlank() -> deriveDayOfWeek(dateRaw)
+                        dayRaw.isNotBlank() -> when (dayRaw.lowercase().take(3)) {
+                            "mon" -> "Mon"
+                            "tue" -> "Tue"
+                            "wed" -> "Wed"
+                            "thu" -> "Thu"
+                            "fri" -> "Fri"
+                            "sat" -> "Sat"
+                            "sun" -> "Sun"
+                            else -> "Mon"
+                        }
                         else -> "Mon"
                     }
+
                     val subject = obj.optString("subject", "").trim()
-                    val timeSlot = obj.optString("timeSlot", "10:00 AM - 11:30 AM").trim()
+                    val timeSlot = obj.optString("timeSlot", "10:30 AM - 12:30 PM").trim().replace("–", "-")
                     val startTime = obj.optString("startTime", "").trim()
                     val endTime = obj.optString("endTime", "").trim()
                     val room = obj.optString("room", "").trim()
                     val faculty = obj.optString("faculty", "").trim()
                     val isLab = obj.optBoolean("isLab", false)
-                    val colorKey = obj.optString("colorKey", if (isLab) "teal" else "purple")
+                    val colorKey = obj.optString("colorKey", if (isExam) "purple" else if (isLab) "teal" else "blue")
 
-                    // Filter out breaks, headings, and non-class entries
                     if (subject.isNotBlank() && !isBreakOrHeading(subject)) {
                         rawClassesList.add(
                             ParsedTimetableClass(
@@ -1207,7 +1459,11 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                                 colorKey = colorKey,
                                 startTime = startTime,
                                 endTime = endTime,
-                                isLab = isLab
+                                isLab = isLab,
+                                date = dateRaw,
+                                subjectCode = subjectCode,
+                                courseType = courseType,
+                                isExam = isExam
                             )
                         )
                     }
@@ -1217,17 +1473,31 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
             summaryText = ""
         }
 
-        // Deduplicate classes (same day, subject, timeSlot)
+        // If AI returned 0 entries, try dynamic document text parser fallback
+        if (rawClassesList.isEmpty() && rawDocumentText.isNotBlank()) {
+            val textParsed = parseTimetableFromDocumentText(rawDocumentText)
+            if (textParsed.second.isNotEmpty()) {
+                return textParsed
+            }
+        }
+
+        // Deduplicate classes (same day, date, subject, timeSlot)
         val deduplicatedClasses = rawClassesList.distinctBy {
-            "${it.day.lowercase()}_${it.subject.lowercase().trim()}_${it.timeSlot.lowercase().trim()}"
+            "${it.date}_${it.day.lowercase()}_${it.subject.lowercase().trim()}_${it.timeSlot.lowercase().trim()}"
         }
 
         val finalSummary = when {
             deduplicatedClasses.isNotEmpty() && summaryText.isNotBlank() -> summaryText
             deduplicatedClasses.isNotEmpty() -> {
-                val dayCount = deduplicatedClasses.map { it.day }.distinct().size
-                val daysList = deduplicatedClasses.map { it.day }.distinct().joinToString(", ")
-                "### 🗓️ Timetable Analysis\n\nIdentified **${deduplicatedClasses.size} classes** across **$dayCount days** ($daysList). Review the entries below and tap 'Apply Schedule' to save them to your schedule."
+                val hasExams = deduplicatedClasses.any { it.isExam }
+                if (hasExams) {
+                    val datesList = deduplicatedClasses.mapNotNull { if (it.date.isNotBlank()) it.date else null }.distinct().joinToString(", ")
+                    "### 🗓️ Examination Schedule\n\nIdentified **${deduplicatedClasses.size} exam entries** on $datesList. Review the entries below and tap 'Apply Schedule' to save them to your timetable."
+                } else {
+                    val dayCount = deduplicatedClasses.map { it.day }.distinct().size
+                    val daysList = deduplicatedClasses.map { it.day }.distinct().joinToString(", ")
+                    "### 🗓️ Timetable Analysis\n\nIdentified **${deduplicatedClasses.size} classes** across **$dayCount days** ($daysList). Review the entries below and tap 'Apply Schedule' to save them to your schedule."
+                }
             }
             else -> {
                 "No timetable classes or schedule entries were identified in this document. Please verify that the document contains clear days of the week, subject names, and class timings."
@@ -1241,13 +1511,10 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
         val s = subject.trim().lowercase()
         if (s.length < 2) return true
         val nonClassKeywords = listOf(
-            "lunch", "break", "recess", "interval", "tea break", "free period",
-            "heading", "timetable", "schedule", "period", "class", "day", "time",
-            "mon", "tue", "wed", "thu", "fri", "sat", "sun", "monday", "tuesday",
-            "wednesday", "thursday", "friday", "saturday", "sunday"
+            "lunch", "break", "recess", "interval", "tea break", "free period"
         )
         return nonClassKeywords.any { s == it || s.startsWith("$it ") || s.endsWith(" $it") } ||
-                !subject.any { it.isLetter() }
+                (!subject.any { it.isLetter() } && !subject.any { it.isDigit() })
     }
 
     private fun parseAssignmentAiResponse(rawResponse: String): Triple<String, List<Triple<String, String, String>>, List<String>> {
@@ -1295,31 +1562,71 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         docProcessingState.value = DocProcessingState.SAVING
-        docProcessingStatusText.value = "Saving classes to timetable..."
+        docProcessingStatusText.value = "Saving schedule to timetable..."
 
         viewModelScope.launch {
-            val entities = classes.map {
-                TimetableEntity(
-                    dayOfWeek = it.day,
-                    subject = it.subject,
-                    timeSlot = it.timeSlot,
-                    startTime = it.startTime,
-                    endTime = it.endTime,
-                    room = it.room,
-                    facultyName = it.faculty,
-                    isLab = it.isLab,
-                    colorKey = it.colorKey
-                )
-            }
-            timetableDao.insertClasses(entities)
+            val existing = timetableDao.getAllClassesSync()
+            val newEntities = mutableListOf<TimetableEntity>()
 
-            if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
-                entities.forEach { FirestoreManager.saveTimetableClass(it) }
+            classes.forEach { it ->
+                // Check if identical class/exam already exists (prevent duplicates)
+                val alreadyExists = existing.any { ex ->
+                    if (it.isExam && it.date.isNotBlank()) {
+                        ex.isExam && ex.examDate.trim() == it.date.trim() &&
+                                ex.subject.equals(it.subject.trim(), ignoreCase = true)
+                    } else {
+                        ex.dayOfWeek.equals(it.day.trim(), ignoreCase = true) &&
+                                ex.subject.equals(it.subject.trim(), ignoreCase = true) &&
+                                ex.timeSlot.equals(it.timeSlot.trim(), ignoreCase = true)
+                    }
+                }
+
+                if (!alreadyExists) {
+                    newEntities.add(
+                        TimetableEntity(
+                            dayOfWeek = it.day,
+                            subject = it.subject,
+                            timeSlot = it.timeSlot,
+                            startTime = it.startTime,
+                            endTime = it.endTime,
+                            room = it.room,
+                            facultyName = it.faculty,
+                            isLab = it.isLab,
+                            colorKey = it.colorKey,
+                            examDate = it.date,
+                            courseCode = it.subjectCode,
+                            isExam = it.isExam
+                        )
+                    )
+                }
+            }
+
+            if (newEntities.isNotEmpty()) {
+                timetableDao.insertClasses(newEntities)
+                if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
+                    newEntities.forEach { FirestoreManager.saveTimetableClass(it) }
+                }
+
+                // Schedule notifications for any newly added exam events
+                newEntities.filter { it.isExam && it.examDate.isNotBlank() }.forEach { exam ->
+                    try {
+                        com.example.arkin.util.AlarmScheduler.scheduleExamNotification(
+                            getApplication(),
+                            exam.id,
+                            exam.subject,
+                            exam.examDate,
+                            exam.startTime.ifBlank { exam.timeSlot }
+                        )
+                    } catch (_: Exception) {}
+                }
+
+                showToast("All ${newEntities.size} entries saved to your Timetable! 🗓️")
+            } else {
+                showToast("All recognized entries already exist in your schedule.")
             }
 
             docProcessingState.value = DocProcessingState.COMPLETED
-            docProcessingStatusText.value = "Imported ${classes.size} classes"
-            showToast("All ${classes.size} classes imported into your Timetable! 🗓️")
+            docProcessingStatusText.value = "Schedule imported successfully"
             navigateTo(AppScreen.TIMETABLE)
         }
     }
@@ -1328,12 +1635,32 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
         val hwItems = parsedAssignments.value
         if (hwItems.isEmpty()) return
         viewModelScope.launch {
+            val questions = parsedExamQuestions.value
+            val questionsJson = if (questions.isNotEmpty()) {
+                val arr = org.json.JSONArray()
+                questions.forEach { arr.put(it) }
+                arr.toString()
+            } else null
+
+            val descriptionText = if (questions.isNotEmpty()) {
+                "Assignment Questions:\n" + questions.mapIndexed { idx, q -> "${idx + 1}. $q" }.joinToString("\n")
+            } else ""
+
+            val docUriStr = selectedDocUri.value?.toString()
+            val docName = uploadedDocName.value
+            val docSize = DocumentTextExtractor.formatFileSize(docFileSize.value)
+
             hwItems.forEach { (sub, title, due) ->
                 addHomework(
                     subject = sub,
                     title = title,
                     dueDate = due,
-                    priority = "High"
+                    priority = "High",
+                    description = descriptionText,
+                    attachmentUri = docUriStr,
+                    attachmentName = docName,
+                    attachmentSize = docSize,
+                    extractedQuestions = questionsJson
                 )
             }
             docProcessingState.value = DocProcessingState.COMPLETED

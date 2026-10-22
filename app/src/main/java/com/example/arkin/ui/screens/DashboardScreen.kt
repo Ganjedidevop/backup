@@ -83,10 +83,19 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material.icons.automirrored.filled.Assignment
 import com.example.ui.theme.ArkinBackgroundDark
 import com.example.ui.theme.ArkinPrimaryLight
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Assignment
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 @Composable
 fun DashboardScreen(viewModel: ArkinViewModel) {
@@ -108,6 +117,151 @@ fun DashboardScreen(viewModel: ArkinViewModel) {
     val isDark = isSystemInDarkTheme() || MaterialTheme.colorScheme.background == ArkinBackgroundDark
     val scrollState = rememberScrollState()
 
+    var isDrawerOpen by remember { mutableStateOf(false) }
+
+    if (isDrawerOpen) {
+        Dialog(
+            onDismissRequest = { isDrawerOpen = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .clickable { isDrawerOpen = false }
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(300.dp)
+                        .clickable(enabled = false) {},
+                    shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    shadowElevation = 8.dp
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(20.dp)
+                    ) {
+                        // Header with close button
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Arkin Menu",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            IconButton(onClick = { isDrawerOpen = false }) {
+                                Icon(Icons.Default.Close, contentDescription = "Close Menu")
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Profile Card inside drawer
+                        Surface(
+                            onClick = {
+                                isDrawerOpen = false
+                                viewModel.navigateTo(AppScreen.PROFILE)
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            color = ArkinPrimary.copy(alpha = 0.1f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = ArkinPrimary,
+                                    modifier = Modifier.size(44.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = studentFirstName.take(1),
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 18.sp
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = profile?.name?.ifBlank { "Student Profile" } ?: "Student Profile",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "View & Edit Profile",
+                                        fontSize = 11.sp,
+                                        color = ArkinPrimary
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = null,
+                                    tint = ArkinPrimary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        // Navigation Destinations
+                        val menuDestinations = listOf(
+                            Triple("My Profile", Icons.Default.Person, AppScreen.PROFILE),
+                            Triple("Timetable & Exams", Icons.Rounded.CalendarToday, AppScreen.TIMETABLE),
+                            Triple("Homework & Deadlines", Icons.Rounded.Book, AppScreen.HOMEWORK),
+                            Triple("To-Do & Tasks", Icons.Rounded.Checklist, AppScreen.TODO),
+                            Triple("Notes & Documents", Icons.Rounded.Description, AppScreen.NOTES),
+                            Triple("Reminders", Icons.Rounded.NotificationsActive, AppScreen.REMINDERS),
+                            Triple("AI Document Organizer", Icons.AutoMirrored.Filled.Assignment, AppScreen.AI_DOC_ORGANIZER),
+                            Triple("Study Locker (Vault)", Icons.Rounded.Lock, AppScreen.LOCKER),
+                            Triple("Academic Analytics", Icons.Rounded.BarChart, AppScreen.ANALYTICS)
+                        )
+
+                        menuDestinations.forEach { (label, icon, screen) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        isDrawerOpen = false
+                                        viewModel.navigateTo(screen)
+                                    }
+                                    .padding(vertical = 12.dp, horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = label,
+                                    tint = ArkinPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(14.dp))
+                                Text(
+                                    text = label,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -125,11 +279,13 @@ fun DashboardScreen(viewModel: ArkinViewModel) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
-                onClick = { viewModel.navigateTo(AppScreen.PROFILE) },
+                onClick = { isDrawerOpen = true },
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 1.dp,
-                modifier = Modifier.size(42.dp)
+                modifier = Modifier
+                    .size(42.dp)
+                    .testTag("dashboard_hamburger_menu")
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
@@ -141,47 +297,23 @@ fun DashboardScreen(viewModel: ArkinViewModel) {
                 }
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Box(contentAlignment = Alignment.TopEnd) {
-                    IconButton(onClick = { viewModel.navigateTo(AppScreen.REMINDERS) }) {
-                        Icon(
-                            imageVector = Icons.Default.Notifications,
-                            contentDescription = "Reminders",
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                    if (uncompletedRemindersCount > 0) {
-                        Box(
-                            modifier = Modifier
-                                .padding(top = 8.dp, end = 8.dp)
-                                .size(9.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFEF4444))
-                                .border(1.5.dp, MaterialTheme.colorScheme.background, CircleShape)
-                        )
-                    }
+            Box(contentAlignment = Alignment.TopEnd) {
+                IconButton(onClick = { viewModel.navigateTo(AppScreen.REMINDERS) }) {
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = "Reminders",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
                 }
-
-                // Student Avatar
-                Surface(
-                    onClick = { viewModel.navigateTo(AppScreen.PROFILE) },
-                    shape = CircleShape,
-                    color = ArkinPrimary,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .testTag("dashboard_profile_avatar")
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = studentFirstName.take(1),
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp
-                        )
-                    }
+                if (uncompletedRemindersCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .padding(top = 8.dp, end = 8.dp)
+                            .size(9.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFEF4444))
+                            .border(1.5.dp, MaterialTheme.colorScheme.background, CircleShape)
+                    )
                 }
             }
         }
@@ -289,13 +421,6 @@ fun DashboardScreen(viewModel: ArkinViewModel) {
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground
-            )
-            Text(
-                text = "All Tools",
-                color = ArkinPrimary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clickable { viewModel.navigateTo(AppScreen.NOTES) }
             )
         }
 

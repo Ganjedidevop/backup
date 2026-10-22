@@ -244,7 +244,10 @@ object FirestoreManager {
                 "requiredMaterials" to tt.requiredMaterials,
                 "isLab" to tt.isLab,
                 "reminderMinutesBefore" to tt.reminderMinutesBefore,
-                "colorKey" to tt.colorKey
+                "colorKey" to tt.colorKey,
+                "examDate" to tt.examDate,
+                "courseCode" to tt.courseCode,
+                "isExam" to tt.isExam
             )
             userDoc(uid).collection("timetable").document(tt.id.toString()).set(data, SetOptions.merge()).await()
             Result.success(Unit)
@@ -537,7 +540,10 @@ object FirestoreManager {
                             requiredMaterials = doc.getString("requiredMaterials") ?: "",
                             isLab = doc.getBoolean("isLab") ?: false,
                             reminderMinutesBefore = doc.getLong("reminderMinutesBefore")?.toInt() ?: 15,
-                            colorKey = doc.getString("colorKey") ?: "purple"
+                            colorKey = doc.getString("colorKey") ?: "purple",
+                            examDate = doc.getString("examDate") ?: "",
+                            courseCode = doc.getString("courseCode") ?: "",
+                            isExam = doc.getBoolean("isExam") ?: false
                         )
                     } catch (e: Exception) {
                         null

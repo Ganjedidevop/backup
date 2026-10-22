@@ -753,15 +753,41 @@ fun TimetableCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f, fill = false)) {
+                    if (timetable.isExam) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFFFEE2E2),
+                            modifier = Modifier.padding(bottom = 3.dp)
+                        ) {
+                            Text(
+                                text = if (timetable.examDate.isNotBlank()) "🎯 EXAM • ${timetable.examDate}" else "🎯 EXAM",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFFDC2626),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
                     Text(
-                        text = timetable.subject,
+                        text = if (timetable.courseCode.isNotBlank() && !timetable.subject.contains(timetable.courseCode))
+                            "${timetable.courseCode}: ${timetable.subject}"
+                        else timetable.subject,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
+
+                    val subtitleText = when {
+                        timetable.isExam && timetable.examDate.isNotBlank() -> "Timing: ${timetable.timeSlot}"
+                        timetable.room.isNotBlank() -> "📍 ${timetable.room}"
+                        timetable.facultyName.isNotBlank() -> "Prof. ${timetable.facultyName}"
+                        else -> timetable.timeSlot
+                    }
+
                     Text(
-                        text = "📍 ${timetable.room}",
+                        text = subtitleText,
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp)
