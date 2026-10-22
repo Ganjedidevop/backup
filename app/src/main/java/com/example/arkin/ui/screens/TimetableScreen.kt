@@ -54,6 +54,15 @@ import com.example.arkin.ui.components.TimetableCard
 import com.example.arkin.viewmodel.ArkinViewModel
 import com.example.ui.theme.ArkinPrimary
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.foundation.layout.width
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+
 @Composable
 fun TimetableScreen(viewModel: ArkinViewModel) {
     val selectedDay by viewModel.selectedDay.collectAsState()
@@ -74,6 +83,22 @@ fun TimetableScreen(viewModel: ArkinViewModel) {
             onBackClick = { viewModel.goBack() },
             trailingAction = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        onClick = { viewModel.navigateTo(com.example.arkin.model.AppScreen.EXAM_MODE) },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFFEE2E2),
+                        modifier = Modifier
+                            .height(40.dp)
+                            .testTag("timetable_exam_mode_button")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp)
+                        ) {
+                            Text("🎯 Exam Mode", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFDC2626), maxLines = 1, softWrap = false)
+                        }
+                    }
+
                     Surface(
                         onClick = {
                             viewModel.setUploadDocType(com.example.arkin.model.DocUploadType.TIMETABLE)
@@ -261,9 +286,101 @@ private fun AddClassDialog(
     onDismiss: () -> Unit,
     onAdd: (subject: String, timeSlot: String, room: String, colorKey: String) -> Unit
 ) {
+    val context = LocalContext.current
     var subject by remember { mutableStateOf("") }
     var timeSlot by remember { mutableStateOf("10:00 AM - 11:30 AM") }
     var colorKey by remember { mutableStateOf("purple") }
+
+    val cal = remember { Calendar.getInstance() }
+
+    fun pickCalendarDateAndTime() {
+        val datePicker = DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val chosenCal = Calendar.getInstance().apply {
+                    set(Calendar.YEAR, year)
+                    set(Calendar.MONTH, month)
+                    set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                }
+                val formattedDate = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(chosenCal.time)
+
+                // Prompt for Start Time
+                val startTimePicker = TimePickerDialog(
+                    context,
+                    { _, startHour, startMinute ->
+                        val startCal = Calendar.getInstance().apply {
+                            set(Calendar.HOUR_OF_DAY, startHour)
+                            set(Calendar.MINUTE, startMinute)
+                        }
+                        val startTimeStr = SimpleDateFormat("hh:mm a", Locale.US).format(startCal.time)
+
+                        // Prompt for End Time
+                        val endTimePicker = TimePickerDialog(
+                            context,
+                            { _, endHour, endMinute ->
+                                val endCal = Calendar.getInstance().apply {
+                                    set(Calendar.HOUR_OF_DAY, endHour)
+                                    set(Calendar.MINUTE, endMinute)
+                                }
+                                val endTimeStr = SimpleDateFormat("hh:mm a", Locale.US).format(endCal.time)
+                                timeSlot = "$formattedDate, $startTimeStr - $endTimeStr"
+                            },
+                            (startHour + 1) % 24,
+                            startMinute,
+                            false
+                        )
+                        endTimePicker.setTitle("Select End Time")
+                        endTimePicker.show()
+                    },
+                    cal.get(Calendar.HOUR_OF_DAY),
+                    cal.get(Calendar.MINUTE),
+                    false
+                )
+                startTimePicker.setTitle("Select Start Time")
+                startTimePicker.show()
+            },
+            cal.get(Calendar.YEAR),
+            cal.get(Calendar.MONTH),
+            cal.get(Calendar.DAY_OF_MONTH)
+        )
+        datePicker.setTitle("Select Calendar Date 📅")
+        datePicker.show()
+    }
+
+    fun pickTimeSlotOnly() {
+        val startTimePicker = TimePickerDialog(
+            context,
+            { _, startHour, startMinute ->
+                val startCal = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, startHour)
+                    set(Calendar.MINUTE, startMinute)
+                }
+                val startTimeStr = SimpleDateFormat("hh:mm a", Locale.US).format(startCal.time)
+
+                val endTimePicker = TimePickerDialog(
+                    context,
+                    { _, endHour, endMinute ->
+                        val endCal = Calendar.getInstance().apply {
+                            set(Calendar.HOUR_OF_DAY, endHour)
+                            set(Calendar.MINUTE, endMinute)
+                        }
+                        val endTimeStr = SimpleDateFormat("hh:mm a", Locale.US).format(endCal.time)
+                        timeSlot = "$startTimeStr - $endTimeStr"
+                    },
+                    (startHour + 1) % 24,
+                    startMinute,
+                    false
+                )
+                endTimePicker.setTitle("Select End Time")
+                endTimePicker.show()
+            },
+            cal.get(Calendar.HOUR_OF_DAY),
+            cal.get(Calendar.MINUTE),
+            false
+        )
+        startTimePicker.setTitle("Select Start Time")
+        startTimePicker.show()
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -310,16 +427,92 @@ private fun AddClassDialog(
                 OutlinedTextField(
                     value = timeSlot,
                     onValueChange = { timeSlot = it },
-                    label = { Text("Time Slot") },
+                    label = { Text("Time Slot & Date") },
                     placeholder = { Text("e.g. 10:00 AM - 11:30 AM") },
                     singleLine = true,
                     shape = RoundedCornerShape(16.dp),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
+                    trailingIcon = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { pickCalendarDateAndTime() },
+                                modifier = Modifier.testTag("class_pick_calendar_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.CalendarToday,
+                                    contentDescription = "Pick Calendar Date & Time",
+                                    tint = ArkinPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = { pickTimeSlotOnly() },
+                                modifier = Modifier.testTag("class_pick_time_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Schedule,
+                                    contentDescription = "Pick Time Slot",
+                                    tint = Color(0xFF6366F1),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 18.dp)
+                        .padding(bottom = 6.dp)
                         .testTag("class_timeslot_input")
                 )
+
+                // Quick picker button row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        onClick = { pickCalendarDateAndTime() },
+                        shape = RoundedCornerShape(10.dp),
+                        color = ArkinPrimary.copy(alpha = 0.12f),
+                        modifier = Modifier.height(30.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.CalendarToday,
+                                contentDescription = null,
+                                tint = ArkinPrimary,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Calendar Date 📅", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = ArkinPrimary)
+                        }
+                    }
+
+                    Surface(
+                        onClick = { pickTimeSlotOnly() },
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFFEEF2FF),
+                        modifier = Modifier.height(30.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Schedule,
+                                contentDescription = null,
+                                tint = Color(0xFF4F46E5),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Time Picker ⏰", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4F46E5))
+                        }
+                    }
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),

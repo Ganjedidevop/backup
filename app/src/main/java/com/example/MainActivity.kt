@@ -174,6 +174,7 @@ fun MainAppContent(viewModel: ArkinViewModel) {
                     AppScreen.PROFILE -> ProfileScreen(viewModel = viewModel)
 
                     AppScreen.ASSIGNMENT_DETAIL -> AssignmentDetailScreen(viewModel = viewModel)
+                    AppScreen.EXAM_MODE -> com.example.arkin.ui.screens.ExamModeScreen(viewModel = viewModel)
                 }
             }
         }

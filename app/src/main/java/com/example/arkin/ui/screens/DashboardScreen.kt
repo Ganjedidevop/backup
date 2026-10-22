@@ -264,7 +264,60 @@ fun DashboardScreen(viewModel: ArkinViewModel) {
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Exam Mode entry in drawer
+                        Surface(
+                            onClick = {
+                                isDrawerOpen = false
+                                viewModel.navigateTo(AppScreen.EXAM_MODE)
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color(0xFFFEE2E2),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("drawer_exam_mode_button")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFFEF4444),
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = "🎯",
+                                            fontSize = 16.sp
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Exam Mode",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = Color(0xFF991B1B)
+                                    )
+                                    Text(
+                                        text = "Schedule, Countdown & AI Prep",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFFB91C1C)
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = null,
+                                    tint = Color(0xFFEF4444),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
 
                         Text(
                             text = "Settings",

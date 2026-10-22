@@ -88,6 +88,13 @@ import com.example.ui.theme.AccentBlueText
 import com.example.ui.theme.AccentPurpleBg
 import com.example.ui.theme.AccentPurpleText
 import com.example.ui.theme.ArkinPrimary
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import androidx.compose.material.icons.rounded.CalendarToday
+import androidx.compose.material.icons.rounded.Schedule
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 
 @Composable
 fun AiDocumentOrganizerScreen(viewModel: ArkinViewModel) {
@@ -901,14 +908,77 @@ private fun EditClassDialog(
     onDismiss: () -> Unit,
     onConfirm: (ParsedTimetableClass) -> Unit
 ) {
+    val context = LocalContext.current
     var day by remember { mutableStateOf(initialClass.day) }
     var subject by remember { mutableStateOf(initialClass.subject) }
     var timeSlot by remember { mutableStateOf(initialClass.timeSlot) }
+    var examDate by remember { mutableStateOf(initialClass.date) }
+    var subjectCode by remember { mutableStateOf(initialClass.subjectCode) }
     var room by remember { mutableStateOf(initialClass.room) }
     var faculty by remember { mutableStateOf(initialClass.faculty) }
     var isLab by remember { mutableStateOf(initialClass.isLab) }
+    var isExam by remember { mutableStateOf(initialClass.isExam) }
 
     val days = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    val cal = remember { Calendar.getInstance() }
+
+    fun openDatePicker() {
+        val dp = DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val chosen = Calendar.getInstance().apply {
+                    set(Calendar.YEAR, year)
+                    set(Calendar.MONTH, month)
+                    set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                }
+                val dateStr = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(chosen.time)
+                examDate = dateStr
+                if (isExam) {
+                    timeSlot = "$dateStr, ${timeSlot.substringAfter(",", timeSlot).trim()}"
+                }
+            },
+            cal.get(Calendar.YEAR),
+            cal.get(Calendar.MONTH),
+            cal.get(Calendar.DAY_OF_MONTH)
+        )
+        dp.setTitle("Select Date 📅")
+        dp.show()
+    }
+
+    fun openTimePicker() {
+        val tpStart = TimePickerDialog(
+            context,
+            { _, startH, startM ->
+                val startCal = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, startH)
+                    set(Calendar.MINUTE, startM)
+                }
+                val startStr = SimpleDateFormat("hh:mm a", Locale.US).format(startCal.time)
+
+                val tpEnd = TimePickerDialog(
+                    context,
+                    { _, endH, endM ->
+                        val endCal = Calendar.getInstance().apply {
+                            set(Calendar.HOUR_OF_DAY, endH)
+                            set(Calendar.MINUTE, endM)
+                        }
+                        val endStr = SimpleDateFormat("hh:mm a", Locale.US).format(endCal.time)
+                        timeSlot = if (examDate.isNotBlank()) "$examDate, $startStr - $endStr" else "$startStr - $endStr"
+                    },
+                    (startH + 1) % 24,
+                    startM,
+                    false
+                )
+                tpEnd.setTitle("Select End Time")
+                tpEnd.show()
+            },
+            cal.get(Calendar.HOUR_OF_DAY),
+            cal.get(Calendar.MINUTE),
+            false
+        )
+        tpStart.setTitle("Select Start Time")
+        tpStart.show()
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -948,19 +1018,54 @@ private fun EditClassDialog(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                 )
 
+                if (isExam || examDate.isNotBlank()) {
+                    OutlinedTextField(
+                        value = subjectCode,
+                        onValueChange = { subjectCode = it },
+                        label = { Text("Course Code (e.g. BCAMJ501)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = examDate,
+                        onValueChange = { examDate = it },
+                        label = { Text("Exam Date (DD/MM/YYYY)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        trailingIcon = {
+                            IconButton(onClick = { openDatePicker() }) {
+                                Icon(Icons.Rounded.CalendarToday, contentDescription = "Pick Date", tint = ArkinPrimary)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                    )
+                }
+
                 OutlinedTextField(
                     value = timeSlot,
                     onValueChange = { timeSlot = it },
-                    label = { Text("Time Slot (e.g. 09:00 AM - 10:30 AM)") },
+                    label = { Text("Time Slot & Date") },
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
+                    trailingIcon = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { openDatePicker() }) {
+                                Icon(Icons.Rounded.CalendarToday, contentDescription = "Pick Date", tint = ArkinPrimary, modifier = Modifier.size(18.dp))
+                            }
+                            IconButton(onClick = { openTimePicker() }) {
+                                Icon(Icons.Rounded.Schedule, contentDescription = "Pick Time", tint = Color(0xFF6366F1), modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                 )
 
                 OutlinedTextField(
                     value = room,
                     onValueChange = { room = it },
-                    label = { Text("Classroom / Lab") },
+                    label = { Text("Classroom / Hall") },
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
@@ -969,7 +1074,7 @@ private fun EditClassDialog(
                 OutlinedTextField(
                     value = faculty,
                     onValueChange = { faculty = it },
-                    label = { Text("Faculty / Professor") },
+                    label = { Text("Faculty / Notes") },
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
@@ -978,10 +1083,21 @@ private fun EditClassDialog(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                 ) {
-                    Text("Is this a Laboratory session?", fontSize = 13.sp)
-                    Switch(checked = isLab, onCheckedChange = { isLab = it })
+                    Text("Is this an Examination Schedule?", fontSize = 13.sp)
+                    Switch(checked = isExam, onCheckedChange = { isExam = it })
+                }
+
+                if (!isExam) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    ) {
+                        Text("Is this a Laboratory session?", fontSize = 13.sp)
+                        Switch(checked = isLab, onCheckedChange = { isLab = it })
+                    }
                 }
             }
         },
@@ -996,7 +1112,10 @@ private fun EditClassDialog(
                                 timeSlot = timeSlot.trim(),
                                 room = room.trim(),
                                 faculty = faculty.trim(),
-                                isLab = isLab
+                                isLab = isLab,
+                                date = examDate.trim(),
+                                subjectCode = subjectCode.trim(),
+                                isExam = isExam
                             )
                         )
                     }

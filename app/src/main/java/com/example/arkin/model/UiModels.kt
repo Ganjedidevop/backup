@@ -14,7 +14,8 @@ enum class AppScreen {
     REMINDERS,
     ANALYTICS,
     PROFILE,
-    ASSIGNMENT_DETAIL
+    ASSIGNMENT_DETAIL,
+    EXAM_MODE
 }
 
 enum class BottomNavTab {
@@ -72,4 +73,23 @@ data class ParsedTimetableClass(
     val courseType: String = "",
     val isExam: Boolean = false
 )
+
+sealed class AiExamPrepState {
+    object Idle : AiExamPrepState()
+    data class Loading(val mode: String) : AiExamPrepState()
+    data class Success(val mode: String, val content: String, val notesUsedCount: Int) : AiExamPrepState()
+    data class Error(val message: String) : AiExamPrepState()
+}
+
+data class RevisionPlanItem(
+    val id: String,
+    val examId: Long,
+    val dayNumber: Int,
+    val dayLabel: String,
+    val dateText: String,
+    val topicTitle: String,
+    val hours: Float,
+    val isDone: Boolean = false
+)
+
 

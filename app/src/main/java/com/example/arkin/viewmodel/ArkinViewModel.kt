@@ -38,8 +38,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.example.arkin.model.AiExamPrepState
+import com.example.arkin.model.RevisionPlanItem
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -130,6 +133,21 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
     ) { classes, day ->
         classes.filter { it.dayOfWeek.equals(day, ignoreCase = true) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // All Exams (Exam Mode & Schedule)
+    val allExams: StateFlow<List<TimetableEntity>> = timetableDao.getAllClasses().map { list ->
+        list.filter { it.isExam || it.examDate.isNotBlank() }
+            .sortedWith { a, b ->
+                val timeA = com.example.arkin.util.AlarmScheduler.parseDateTimeToEpoch("${a.examDate} ${a.startTime.ifBlank { a.timeSlot }}") ?: Long.MAX_VALUE
+                val timeB = com.example.arkin.util.AlarmScheduler.parseDateTimeToEpoch("${b.examDate} ${b.startTime.ifBlank { b.timeSlot }}") ?: Long.MAX_VALUE
+                timeA.compareTo(timeB)
+            }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val aiExamPrepState = MutableStateFlow<AiExamPrepState>(AiExamPrepState.Idle)
+    val completedRevisionTaskIds = MutableStateFlow<Set<String>>(emptySet())
+    val selectedStudyHoursPerDay = MutableStateFlow(3)
+    val examCustomSyllabus = MutableStateFlow<Map<Long, String>>(emptyMap())
 
     // Reminders
     val allReminders: StateFlow<List<ReminderEntity>> = reminderDao.getAllReminders()
@@ -710,7 +728,10 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
         facultyName: String = "",
         requiredMaterials: String = "",
         isLab: Boolean = false,
-        colorKey: String = "purple"
+        colorKey: String = "purple",
+        examDate: String = "",
+        courseCode: String = "",
+        isExam: Boolean = false
     ) {
         if (subject.isBlank() || timeSlot.isBlank()) return
         viewModelScope.launch {
@@ -722,13 +743,225 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                 facultyName = facultyName.trim(),
                 requiredMaterials = requiredMaterials.trim(),
                 isLab = isLab,
-                colorKey = colorKey
+                colorKey = colorKey,
+                examDate = examDate.trim(),
+                courseCode = courseCode.trim(),
+                isExam = isExam
             )
             val id = timetableDao.insertClass(entry)
             if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
                 FirestoreManager.saveTimetableClass(entry.copy(id = id))
             }
-            showToast("Class added to timetable")
+            if (isExam && examDate.isNotBlank()) {
+                try {
+                    com.example.arkin.util.AlarmScheduler.scheduleExamNotification(
+                        getApplication(),
+                        id,
+                        subject.trim(),
+                        examDate.trim(),
+                        timeSlot.trim()
+                    )
+                } catch (_: Exception) {}
+            }
+            showToast(if (isExam) "Exam added to schedule 🎯" else "Class added to timetable")
+        }
+    }
+
+    // Exam Mode Actions
+    fun addExam(
+        subject: String,
+        courseCode: String = "",
+        examDate: String,
+        timeSlot: String,
+        room: String = "",
+        colorKey: String = "purple"
+    ) {
+        if (subject.isBlank() || examDate.isBlank() || timeSlot.isBlank()) return
+        viewModelScope.launch {
+            val dayOfWeek = deriveDayOfWeek(examDate)
+            val entry = TimetableEntity(
+                dayOfWeek = dayOfWeek,
+                subject = subject.trim(),
+                timeSlot = timeSlot.trim(),
+                room = room.trim(),
+                colorKey = colorKey,
+                examDate = examDate.trim(),
+                courseCode = courseCode.trim(),
+                isExam = true
+            )
+            val id = timetableDao.insertClass(entry)
+            if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
+                FirestoreManager.saveTimetableClass(entry.copy(id = id))
+            }
+            try {
+                com.example.arkin.util.AlarmScheduler.scheduleExamNotification(
+                    getApplication(),
+                    id,
+                    entry.subject,
+                    entry.examDate,
+                    entry.timeSlot
+                )
+            } catch (_: Exception) {}
+            showToast("Exam added to Exam Mode schedule! 🎯")
+        }
+    }
+
+    fun updateExam(entry: TimetableEntity) {
+        viewModelScope.launch {
+            timetableDao.updateClass(entry)
+            if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
+                FirestoreManager.saveTimetableClass(entry)
+            }
+            try {
+                com.example.arkin.util.AlarmScheduler.scheduleExamNotification(
+                    getApplication(),
+                    entry.id,
+                    entry.subject,
+                    entry.examDate,
+                    entry.timeSlot
+                )
+            } catch (_: Exception) {}
+            showToast("Exam updated successfully")
+        }
+    }
+
+    fun deleteExam(entry: TimetableEntity) {
+        deleteClass(entry)
+    }
+
+    fun toggleRevisionTask(taskId: String) {
+        val current = completedRevisionTaskIds.value
+        completedRevisionTaskIds.value = if (current.contains(taskId)) {
+            current - taskId
+        } else {
+            current + taskId
+        }
+    }
+
+    fun setStudyHours(hours: Int) {
+        selectedStudyHoursPerDay.value = hours.coerceIn(1, 10)
+    }
+
+    fun setExamSyllabus(examId: Long, syllabus: String) {
+        examCustomSyllabus.value = examCustomSyllabus.value + (examId to syllabus)
+    }
+
+    fun resetAiExamPrepState() {
+        aiExamPrepState.value = AiExamPrepState.Idle
+    }
+
+    fun generateExamPreparation(exam: TimetableEntity, mode: String) {
+        aiExamPrepState.value = AiExamPrepState.Loading(mode)
+        viewModelScope.launch {
+            try {
+                val allNotes = noteDao.getAllNotesSync()
+                val relevantNotes = allNotes.filter { note ->
+                    note.subject.equals(exam.subject, ignoreCase = true) ||
+                    note.title.contains(exam.subject, ignoreCase = true) ||
+                    (exam.courseCode.isNotBlank() && (note.content.contains(exam.courseCode, ignoreCase = true) || note.title.contains(exam.courseCode, ignoreCase = true)))
+                }
+
+                val notesContext = if (relevantNotes.isNotEmpty()) {
+                    relevantNotes.take(4).joinToString("\n\n---\n\n") { "Title: ${it.title}\nContent:\n${it.content.take(1200)}" }
+                } else ""
+
+                val customSyllabus = examCustomSyllabus.value[exam.id].orEmpty()
+
+                val prompt = when (mode) {
+                    "SUMMARY" -> """
+                        You are Arkin AI, an expert exam preparation mentor for college students.
+                        Prepare a high-yield, comprehensive Revision Summary and Core Concepts Guide for the following exam:
+                        Subject: ${exam.subject} ${if (exam.courseCode.isNotBlank()) "(${exam.courseCode})" else ""}
+                        Exam Date: ${exam.examDate}
+                        Timings: ${exam.timeSlot}
+                        
+                        ${if (customSyllabus.isNotBlank()) "Student's Syllabus Topics:\n$customSyllabus\n" else ""}
+                        ${if (notesContext.isNotBlank()) "Student's Saved Notes:\n$notesContext\n" else "Note: Student has no local notes saved yet. Provide a rigorous, standard university-level curriculum summary for '${exam.subject}'."}
+                        
+                        Please structure your output using clear Markdown headings:
+                        # 📚 Quick Revision Summary: ${exam.subject}
+                        ## 1. High-Yield Core Concepts & Key Formulas
+                        ## 2. Essential Definitions & Theorems
+                        ## 3. Most Frequently Asked University Exam Topics
+                        ## 4. Key Exam Pitfalls & Last-Minute Memory Aids
+                        
+                        *Notice: This study guide is an AI-generated suggestion to assist revision. Verify against your official college syllabus.*
+                    """.trimIndent()
+
+                    "TOPICS" -> """
+                        You are Arkin AI, an academic exam strategist.
+                        Generate a prioritized Topic Checklist and Study Weightage Breakdown for the following exam:
+                        Subject: ${exam.subject} ${if (exam.courseCode.isNotBlank()) "(${exam.courseCode})" else ""}
+                        Exam Date: ${exam.examDate}
+                        
+                        ${if (customSyllabus.isNotBlank()) "Student's Syllabus Topics:\n$customSyllabus\n" else ""}
+                        ${if (notesContext.isNotBlank()) "Student's Saved Notes:\n$notesContext\n" else "Note: Standard university-level syllabus for '${exam.subject}'."}
+                        
+                        Structure your response in Markdown with clear checklist items:
+                        # ✅ High-Yield Topic Checklist: ${exam.subject}
+                        ## 🔴 Tier 1: Highest Priority (Must Master)
+                        - [ ] Topic 1: Key explanation & focus points
+                        - [ ] Topic 2: Key explanation & focus points
+                        ## 🟡 Tier 2: Medium Priority (Common Questions)
+                        - [ ] Topic 3: Key focus
+                        - [ ] Topic 4: Key focus
+                        ## 🟢 Tier 3: Quick Review (Formulas / Definitions)
+                        - [ ] Topic 5: Rapid review item
+                        
+                        *Notice: AI-generated revision checklist. Always cross-check with your professor's syllabus.*
+                    """.trimIndent()
+
+                    "QUESTIONS" -> """
+                        You are Arkin AI, an exam preparation tutor.
+                        Generate realistic, exam-style practice questions with detailed model answers and marking rubrics for:
+                        Subject: ${exam.subject} ${if (exam.courseCode.isNotBlank()) "(${exam.courseCode})" else ""}
+                        
+                        ${if (customSyllabus.isNotBlank()) "Syllabus Context:\n$customSyllabus\n" else ""}
+                        ${if (notesContext.isNotBlank()) "Student Notes Context:\n$notesContext\n" else ""}
+                        
+                        Include:
+                        # ❓ Exam Practice Questions & Solutions: ${exam.subject}
+                        - 3 Short Answer Questions (2-3 marks each) with precise model answers.
+                        - 2 Long / Analytical / Numerical Questions (5-10 marks each) with step-by-step solving and marking scheme.
+                        - Pro Tips on how examiners award marks and common errors.
+                        
+                        *Notice: Practice questions generated by AI. Use as an active recall tool.*
+                    """.trimIndent()
+
+                    else -> """
+                        You are Arkin AI, creating a 30-minute Mock Exam for:
+                        Subject: ${exam.subject} ${if (exam.courseCode.isNotBlank()) "(${exam.courseCode})" else ""}
+                        
+                        ${if (customSyllabus.isNotBlank()) "Syllabus:\n$customSyllabus\n" else ""}
+                        ${if (notesContext.isNotBlank()) "Notes:\n$notesContext\n" else ""}
+                        
+                        Generate:
+                        # 🎯 Mock Test: ${exam.subject}
+                        ### Section A: 4 Multiple Choice Questions (with Answer Key & Explanations at the end)
+                        ### Section B: 2 Analytical / Descriptive Questions
+                        ### Complete Answer Key & Marking Guide
+                        
+                        *Notice: AI mock exam simulator.*
+                    """.trimIndent()
+                }
+
+                val aiResult = GroqHelper.analyzeDocument(prompt)
+                aiResult.onSuccess { text ->
+                    aiExamPrepState.value = AiExamPrepState.Success(
+                        mode = mode,
+                        content = text,
+                        notesUsedCount = relevantNotes.size
+                    )
+                }.onFailure { err ->
+                    aiExamPrepState.value = AiExamPrepState.Error(
+                        "AI preparation failed: ${err.message ?: "Network timeout"}. Please verify your network connection and retry."
+                    )
+                }
+            } catch (e: Exception) {
+                aiExamPrepState.value = AiExamPrepState.Error(
+                    "Error generating exam prep: ${e.message ?: "Unknown error"}"
+                )
+            }
         }
     }
 
