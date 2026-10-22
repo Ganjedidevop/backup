@@ -78,16 +78,26 @@ import com.example.ui.theme.AccentPurpleText
 import com.example.ui.theme.ArkinPrimary
 import com.example.ui.theme.ArkinPrimaryLight
 
+import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Event
+import androidx.compose.material3.HorizontalDivider
+
 @Composable
 fun ProfileScreen(viewModel: ArkinViewModel) {
     val profile by viewModel.studentProfile.collectAsState()
     var isEditProfileDialogOpen by remember { mutableStateOf(false) }
-    var isChangePinDialogOpen by remember { mutableStateOf(false) }
-    var showResetConfirmDialog by remember { mutableStateOf(false) }
-    var showLogoutConfirmDialog by remember { mutableStateOf(false) }
 
     val name = profile?.name?.ifBlank { "Student" } ?: "Student"
     val major = profile?.major?.ifBlank { "Academic Scholar" } ?: "Academic Scholar"
+    val email = profile?.email?.ifBlank { "student@university.edu" } ?: "student@university.edu"
+    val college = profile?.collegeName?.ifBlank { "University / College" } ?: "University / College"
+    val course = profile?.course?.ifBlank { "Degree Program" } ?: "Degree Program"
+    val semester = profile?.semester?.ifBlank { "Semester 1" } ?: "Semester 1"
+    val academicYear = profile?.academicYear?.ifBlank { "Current Academic Year" } ?: "Current Academic Year"
     val isDark = profile?.isDarkMode ?: false
 
     val scrollState = rememberScrollState()
@@ -100,8 +110,17 @@ fun ProfileScreen(viewModel: ArkinViewModel) {
             .testTag("profile_screen_root")
     ) {
         AppHeader(
-            title = "Profile & Settings",
-            onBackClick = { viewModel.goBack() }
+            title = "Student Profile",
+            onBackClick = { viewModel.goBack() },
+            trailingAction = {
+                IconButton(onClick = { isEditProfileDialogOpen = true }) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Edit Profile",
+                        tint = ArkinPrimary
+                    )
+                }
+            }
         )
 
         Column(
@@ -116,14 +135,14 @@ fun ProfileScreen(viewModel: ArkinViewModel) {
                 color = ArkinPrimary,
                 shadowElevation = 6.dp,
                 modifier = Modifier
-                    .size(92.dp)
+                    .size(96.dp)
                     .testTag("profile_avatar_circle")
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
                         text = name.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString(""),
                         color = Color.White,
-                        fontSize = 32.sp,
+                        fontSize = 34.sp,
                         fontWeight = FontWeight.ExtraBold
                     )
                 }
@@ -133,58 +152,49 @@ fun ProfileScreen(viewModel: ArkinViewModel) {
 
             Text(
                 text = name,
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground
             )
 
             Text(
-                text = major,
+                text = "$course • $major",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 2.dp)
             )
 
-            val college = profile?.collegeName?.takeIf { it.isNotBlank() }
-            val sem = profile?.semester?.takeIf { it.isNotBlank() }
-            val displayText = when {
-                college != null && sem != null -> "$college • $sem"
-                college != null -> college
-                sem != null -> sem
-                else -> "Tap 'Student Profile' to add university & semester"
-            }
-
             val badgeBg = if (isDark) MaterialTheme.colorScheme.surfaceVariant else AccentBlueBg
             val badgeText = if (isDark) ArkinPrimaryLight else AccentBlueText
 
             Surface(
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = badgeBg,
                 modifier = Modifier.padding(top = 8.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.School,
                         contentDescription = "Academic",
                         tint = badgeText,
-                        modifier = Modifier.size(14.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = displayText,
-                        fontSize = 11.sp,
+                        text = "$college • $semester",
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = badgeText
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(22.dp))
 
-            // Settings Menu Items Group
+            // Student Information Details Card (View Mode)
             Card(
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -192,101 +202,101 @@ fun ProfileScreen(viewModel: ArkinViewModel) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                    // Account & Academic Details
-                    SettingsRow(
-                        title = "Student & Academic Profile",
+                    ProfileDetailItem(
+                        label = "Full Name",
+                        value = name,
                         icon = Icons.Default.Person,
-                        bgColor = AccentBlueBg,
-                        iconColor = AccentBlueText,
-                        onClick = { isEditProfileDialogOpen = true }
+                        iconBg = AccentBlueBg,
+                        iconTint = AccentBlueText
                     )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
 
-
-                    // AI Document & Timetable Organizer
-                    SettingsRow(
-                        title = "AI Document & Timetable Parser",
-                        icon = Icons.Default.AutoAwesome,
-                        bgColor = if (isDark) MaterialTheme.colorScheme.surfaceVariant else Color(0xFFF3E8FF),
-                        iconColor = if (isDark) Color(0xFFC084FC) else Color(0xFF9333EA),
-                        onClick = { viewModel.navigateTo(AppScreen.AI_DOC_ORGANIZER) }
+                    ProfileDetailItem(
+                        label = "Student Email",
+                        value = email,
+                        icon = Icons.Default.Email,
+                        iconBg = AccentPurpleBg,
+                        iconTint = AccentPurpleText
                     )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
 
-                    // Change Locker PIN
-                    SettingsRow(
-                        title = "Change Locker PIN",
-                        icon = Icons.Default.Lock,
-                        bgColor = AccentLockerBg,
-                        iconColor = AccentLockerText,
-                        onClick = { isChangePinDialogOpen = true }
+                    ProfileDetailItem(
+                        label = "College / University",
+                        value = college,
+                        icon = Icons.Default.AccountBalance,
+                        iconBg = AccentOrangeBg,
+                        iconTint = AccentOrangeText
                     )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
 
-                    // Dark Mode Toggle
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = AccentPurpleBg,
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.DarkMode,
-                                        contentDescription = "Dark Mode",
-                                        tint = AccentPurpleText,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Text(
-                                text = "Dark Mode",
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                        Switch(
-                            checked = isDark,
-                            onCheckedChange = { viewModel.toggleDarkMode() },
-                            colors = SwitchDefaults.colors(checkedThumbColor = ArkinPrimary)
-                        )
-                    }
-
-
-
-                    // Reset Account Data (Start Fresh)
-                    SettingsRow(
-                        title = "Reset Account Data (Start Fresh)",
-                        icon = Icons.Default.DeleteSweep,
-                        bgColor = if (isDark) Color(0xFF7C2D12).copy(alpha = 0.35f) else Color(0xFFFFEDD5),
-                        iconColor = if (isDark) Color(0xFFFB923C) else Color(0xFFEA580C),
-                        titleColor = if (isDark) Color(0xFFFB923C) else Color(0xFFEA580C),
-                        onClick = { showResetConfirmDialog = true }
+                    ProfileDetailItem(
+                        label = "Program / Course",
+                        value = course,
+                        icon = Icons.Default.School,
+                        iconBg = Color(0xFFE0F2FE),
+                        iconTint = Color(0xFF0284C7)
                     )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
 
-                    // Logout
-                    SettingsRow(
-                        title = "Log Out",
-                        icon = Icons.AutoMirrored.Filled.ExitToApp,
-                        bgColor = if (isDark) Color(0xFF7F1D1D).copy(alpha = 0.35f) else Color(0xFFFEE2E2),
-                        iconColor = if (isDark) Color(0xFFF87171) else Color(0xFFDC2626),
-                        titleColor = if (isDark) Color(0xFFF87171) else Color(0xFFDC2626),
-                        onClick = { showLogoutConfirmDialog = true }
+                    ProfileDetailItem(
+                        label = "Current Semester",
+                        value = semester,
+                        icon = Icons.Default.Event,
+                        iconBg = Color(0xFFDCFCE7),
+                        iconTint = Color(0xFF16A34A)
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
+
+                    ProfileDetailItem(
+                        label = "Academic Year",
+                        value = academicYear,
+                        icon = Icons.Default.DateRange,
+                        iconBg = Color(0xFFFEF3C7),
+                        iconTint = Color(0xFFD97706)
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
+
+                    ProfileDetailItem(
+                        label = "Department / Specialization",
+                        value = major,
+                        icon = Icons.Default.AutoStories,
+                        iconBg = Color(0xFFF3E8FF),
+                        iconTint = Color(0xFF9333EA)
                     )
                 }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Prominent Edit Profile Button
+            Button(
+                onClick = { isEditProfileDialogOpen = true },
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = ArkinPrimary),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Edit Profile",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
             }
 
             Spacer(modifier = Modifier.height(28.dp))
 
             Text(
-                text = "Arkin v1.0 • Powered by Firebase (arkin-22b82) & Groq AI",
-                fontSize = 11.sp,
+                text = "Arkin Student Profile • Synced with Cloud",
+                fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
@@ -310,92 +320,52 @@ fun ProfileScreen(viewModel: ArkinViewModel) {
             }
         )
     }
-
-    if (isChangePinDialogOpen) {
-        SecurePinChangeDialog(
-            onDismiss = { isChangePinDialogOpen = false },
-            onPinSuccessfullyChanged = { newPin ->
-                viewModel.changeLockerPin(newPin)
-                isChangePinDialogOpen = false
-            }
-        )
-    }
-
-    if (showResetConfirmDialog) {
-        ConfirmationDialog(
-            title = "Reset Account Data?",
-            message = "This will remove all merged notes, tasks, homework, and timetable entries from this account so you can start completely fresh. Are you sure?",
-            confirmButtonText = "Reset All Data",
-            icon = Icons.Default.DeleteSweep,
-            onConfirm = {
-                showResetConfirmDialog = false
-                viewModel.resetAccountData(clearCloud = true)
-            },
-            onDismiss = { showResetConfirmDialog = false }
-        )
-    }
-
-    if (showLogoutConfirmDialog) {
-        ConfirmationDialog(
-            title = "Log Out?",
-            message = "Are you sure you want to log out of your account? You will need to sign in again to sync your notes and data.",
-            confirmButtonText = "Log Out",
-            icon = Icons.AutoMirrored.Filled.ExitToApp,
-            onConfirm = {
-                showLogoutConfirmDialog = false
-                viewModel.logout()
-            },
-            onDismiss = { showLogoutConfirmDialog = false }
-        )
-    }
 }
 
 @Composable
-private fun SettingsRow(
-    title: String,
+private fun ProfileDetailItem(
+    label: String,
+    value: String,
     icon: ImageVector,
-    bgColor: Color,
-    iconColor: Color,
-    titleColor: Color? = null,
-    onClick: () -> Unit
+    iconBg: Color,
+    iconTint: Color
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = bgColor,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = title,
-                        tint = iconColor,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = iconBg,
+            modifier = Modifier.size(40.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = label,
+                    tint = iconTint,
+                    modifier = Modifier.size(20.dp)
+                )
             }
-            Spacer(modifier = Modifier.width(14.dp))
+        }
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
+                text = label,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = value.ifBlank { "Not set" },
+                fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = titleColor ?: MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
-        Icon(
-            imageVector = Icons.Default.ChevronRight,
-            contentDescription = "Open",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-            modifier = Modifier.size(20.dp)
-        )
     }
 }
 

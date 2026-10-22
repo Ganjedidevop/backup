@@ -25,12 +25,18 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Psychology
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -287,19 +293,25 @@ fun AiAssistantScreen(viewModel: ArkinViewModel) {
                                 viewModel.sendAiMessage(retryQuery)
                             }
                         },
-                        onCopy = {
-                            clipboardManager.setText(AnnotatedString(msg.text))
+                        onCopy = { copyText ->
+                            clipboardManager.setText(AnnotatedString(copyText))
                             viewModel.showToast("Copied to clipboard")
                         },
-                        onSaveAsNote = {
+                        onSaveAsNote = { noteContent ->
                             viewModel.saveNote(
-                                title = "AI Study Note: ${msg.text.take(30)}...",
-                                content = msg.text,
+                                title = "AI Study Note: ${noteContent.take(30)}...",
+                                content = noteContent,
                                 tag = "Study",
                                 colorKey = "purple",
                                 isSecure = false
                             )
                             viewModel.showToast("Saved to My Notes! 📝")
+                        },
+                        onSendFollowUp = { question ->
+                            if (!isLoading) {
+                                lastSubmittedPrompt = question
+                                viewModel.sendAiMessage(question)
+                            }
                         }
                     )
                 }
@@ -449,15 +461,57 @@ fun AiAssistantScreen(viewModel: ArkinViewModel) {
     }
 }
 
+private fun parseAiResponse(raw: String): Pair<String, List<String>> {
+    val separators = listOf(
+        "---NEXT---",
+        "---FOLLOWUP---",
+        "### Next suggestions:",
+        "### Next questions:",
+        "### Next Suggestions",
+        "### Next Questions",
+        "Suggested next questions:",
+        "Suggested next:"
+    )
+
+    var sepIndex = -1
+    var sepUsed = ""
+    for (sep in separators) {
+        val idx = raw.indexOf(sep, ignoreCase = true)
+        if (idx != -1 && (sepIndex == -1 || idx < sepIndex)) {
+            sepIndex = idx
+            sepUsed = sep
+        }
+    }
+
+    if (sepIndex != -1) {
+        val mainText = raw.substring(0, sepIndex).trim()
+        val afterText = raw.substring(sepIndex).substringAfter(sepUsed).trim()
+        val suggestions = afterText.lines()
+            .map { it.trim().removePrefix("-").removePrefix("*").removePrefix("•").trim() }
+            .filter { it.isNotBlank() && !it.startsWith("#") }
+        return Pair(mainText, suggestions)
+    }
+
+    return Pair(raw.trim(), emptyList())
+}
+
 @Composable
 private fun ChatBubble(
     message: ChatMessage,
     isFailed: Boolean = false,
     onRetry: () -> Unit = {},
-    onCopy: () -> Unit,
-    onSaveAsNote: () -> Unit
+    onCopy: (String) -> Unit,
+    onSaveAsNote: (String) -> Unit,
+    onSendFollowUp: (String) -> Unit
 ) {
     val isUser = message.sender == "user"
+    val timeFormatted = remember(message.timestamp) {
+        try {
+            SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(message.timestamp))
+        } catch (_: Exception) {
+            ""
+        }
+    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -469,7 +523,7 @@ private fun ChatBubble(
                 shape = CircleShape,
                 color = AccentPinkBg,
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(34.dp)
                     .padding(top = 2.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -477,22 +531,54 @@ private fun ChatBubble(
                         imageVector = Icons.Rounded.Psychology,
                         contentDescription = "AI",
                         tint = AccentPinkText,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(10.dp))
         }
 
         Column(
             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
-            modifier = Modifier.fillMaxWidth(if (isUser) 0.85f else 0.92f)
+            modifier = Modifier.fillMaxWidth(if (isUser) 0.85f else 0.94f)
         ) {
+            if (!isUser) {
+                // AI Header: Name + Badge (matching reference style)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(bottom = 6.dp, start = 2.dp)
+                ) {
+                    Text(
+                        text = "Arkin AI",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                    ) {
+                        Text(
+                            text = "Fast",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+
+            val (mainResponseText, followUpQuestions) = remember(message.text) {
+                if (isUser) Pair(message.text, emptyList()) else parseAiResponse(message.text)
+            }
+
             Surface(
                 shape = RoundedCornerShape(
-                    topStart = 20.dp,
+                    topStart = if (isUser) 20.dp else 4.dp,
                     topEnd = 20.dp,
-                    bottomStart = if (isUser) 20.dp else 4.dp,
+                    bottomStart = 20.dp,
                     bottomEnd = if (isUser) 4.dp else 20.dp
                 ),
                 color = if (isUser) ArkinPrimary else MaterialTheme.colorScheme.surface,
@@ -502,7 +588,7 @@ private fun ChatBubble(
                 Column(modifier = Modifier.padding(14.dp)) {
                     if (isUser) {
                         Text(
-                            text = message.text,
+                            text = mainResponseText,
                             fontSize = 14.sp,
                             lineHeight = 21.sp,
                             color = Color.White
@@ -510,59 +596,137 @@ private fun ChatBubble(
                     } else {
                         // Render using rich Compose Markdown
                         MarkdownText(
-                            markdown = message.text,
+                            markdown = mainResponseText,
                             textColor = MaterialTheme.colorScheme.onSurface,
                             isUser = false
                         )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Status & Action Bar (matching reference image)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Completed",
+                                tint = Color(0xFF22C55E),
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Task completed",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF22C55E)
+                            )
+
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "|",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+
+                            IconButton(
+                                onClick = { onCopy(mainResponseText) },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = "Copy Response",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { onSaveAsNote(mainResponseText) },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.NoteAdd,
+                                    contentDescription = "Save to Notes",
+                                    tint = ArkinPrimary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+
+                            if (isFailed) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                OutlinedButton(
+                                    onClick = onRetry,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(24.dp),
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = null,
+                                        tint = ArkinPrimary,
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text("Retry", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = ArkinPrimary)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.weight(1f))
+
+                            if (timeFormatted.isNotBlank()) {
+                                Text(
+                                    text = timeFormatted,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            // Action row below AI responses
-            if (!isUser) {
-                Row(
-                    modifier = Modifier.padding(start = 4.dp, top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            // Follow-Up Suggested Questions (matching reference image)
+            if (!isUser && followUpQuestions.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    IconButton(
-                        onClick = onCopy,
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy Response",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
-                    IconButton(
-                        onClick = onSaveAsNote,
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.NoteAdd,
-                            contentDescription = "Save to Notes",
-                            tint = ArkinPrimary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    if (isFailed) {
-                        OutlinedButton(
-                            onClick = onRetry,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.height(28.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    followUpQuestions.forEach { question ->
+                        Surface(
+                            onClick = { onSendFollowUp(question) },
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = null,
-                                tint = ArkinPrimary,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Retry", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = ArkinPrimary)
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.ChatBubbleOutline,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = question,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = "Ask",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
                         }
                     }
                 }

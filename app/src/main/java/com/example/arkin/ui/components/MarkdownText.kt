@@ -60,7 +60,9 @@ fun MarkdownText(
 ) {
     if (markdown.isBlank()) return
 
-    val blocks = parseMarkdownBlocks(markdown)
+    // Strip out raw HTML br tags into line breaks
+    val sanitized = markdown.replace(Regex("(?i)<br\\s*/?>"), "\n")
+    val blocks = parseMarkdownBlocks(sanitized)
 
     Column(
         modifier = modifier,
@@ -411,7 +413,7 @@ private fun TableView(table: MarkdownBlock.Table) {
                 ) {
                     table.headers.forEach { header ->
                         Text(
-                            text = header,
+                            text = buildInlineMarkdown(header, ArkinPrimary),
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
                             color = ArkinPrimary,
@@ -439,8 +441,9 @@ private fun TableView(table: MarkdownBlock.Table) {
                             .padding(horizontal = 8.dp, vertical = 5.dp)
                     ) {
                         row.forEachIndexed { colIndex, cell ->
+                            val cleanCell = cell.replace(Regex("(?i)<br\\s*/?>"), "\n")
                             Text(
-                                text = cell,
+                                text = buildInlineMarkdown(cleanCell, MaterialTheme.colorScheme.onSurface),
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier

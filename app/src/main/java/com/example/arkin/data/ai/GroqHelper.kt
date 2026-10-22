@@ -284,10 +284,20 @@ object GroqHelper {
 
         // 1. System Prompt
         val systemInstruction = """
-            You are Arkin, an expert, encouraging AI study companion in the Arkin app, powered by Groq's ultra-fast LPU AI cloud inference engine.
-            You help with homework breakdown, conceptual explanations, study scheduling, practice viva quizzes, and summarizing notes.
-            When asked what model, provider, or AI powers you, state that you are Arkin AI running on Groq's high-speed LPU AI engine.
-            Be concise, clear, structured, and student-focused.
+            You are Arkin AI, a smart, concise, and friendly AI study assistant for college students, powered by Groq's high-speed inference.
+            
+            CRITICAL INSTRUCTIONS:
+            1. Direct, Crisp Answer: Answer ONLY what was asked ("jitna pucha hai utna"). Do NOT produce excessively long text, wordy filler, or encyclopedic essays that overwhelm mobile screens. Keep explanations to 1-2 clean paragraphs or brief bullet points.
+            2. Bold key concepts and terms naturally using **term** (e.g. **Operating System (OS)**, **Linux**, **RAM**).
+            3. Strict formatting bans:
+               - NEVER output HTML tags like <br>, <div>, or <span>.
+               - NEVER generate complex, wide markdown tables unless the user explicitly requested a table.
+            4. Follow-Up Questions: At the very end of every answer, provide exactly 2 to 3 concise, highly relevant next questions or topics the student might want to ask next. Format them strictly using this separator:
+            ---NEXT---
+            - [Next question 1]
+            - [Next question 2]
+            - [Next question 3]
+            
             ${if (contextNotes.isNotBlank()) "User's current notes context:\n$contextNotes" else ""}
         """.trimIndent()
 
@@ -351,113 +361,116 @@ object GroqHelper {
         return when {
             query.contains("assignment") || query.contains("question") || query.contains("solve") -> {
                 """
-                    [AI DRAFT ANSWER]
-                    📚 Step-by-Step Homework Solution:
+                    📚 **Step-by-Step Homework Solution:**
                     
-                    1. Key Concept:
-                    • Relational dependencies and concurrency isolation ensure consistent database state.
+                    • **Core Concept:** Verify relational dependencies and ensure closure conditions are met.
+                    • **Steps:** Identify candidate keys, check functional dependencies, and decompose non-conforming relations into BCNF.
+                    • **Outcome:** Ensures lossless join and dependency preservation without anomalies.
                     
-                    2. Detailed Solution Steps:
-                    • Step 1: Identify functional dependencies across all attribute subsets.
-                    • Step 2: Test candidate keys for minimal closure.
-                    • Step 3: Decompose non-conforming relations into BCNF schemas ensuring lossless join property.
-                    
-                    3. Final Answer Summary:
-                    • Decomposed relations: R1(A, B, C) with primary key A, and R2(C, D) with primary key C.
-                    
-                    💡 Note: This is an AI-generated draft. Review and verify the steps before submitting your final report.
+                    ---NEXT---
+                    - Can you give a specific normalization example for 3NF and BCNF?
+                    - What are the common pitfalls in relational database decomposition?
+                    - How to verify if a decomposition is lossless?
                 """.trimIndent()
             }
 
             query.contains("timetable") || query.contains("schedule") -> {
                 """
-                    🗓️ Extracted Timetable Organization:
+                    🗓️ **Extracted Timetable Organization:**
                     
-                    • Monday:
-                      - 09:00 AM - 10:30 AM: Database Systems (Lab 2)
-                      - 11:00 AM - 12:30 PM: Distributed Systems (Hall 102)
-                    • Wednesday:
-                      - 10:00 AM - 11:30 AM: Operating Systems (Room 402)
-                      - 02:00 PM - 04:00 PM: Systems Programming Lab
-                    • Friday:
-                      - 11:00 AM - 12:00 PM: Ethics in Computing (Room 105)
+                    • **Monday & Wednesday:** 09:00 AM - 10:30 AM (Database Systems) | 11:00 AM - 12:30 PM (Operating Systems)
+                    • **Friday:** 10:00 AM - 01:00 PM (Practical Systems Lab)
                     
-                    ✨ Tip: Tap 'Apply Schedule to My Timetable' to import these periods with automatic reminder alerts.
+                    ---NEXT---
+                    - How do I set reminders for these lecture periods?
+                    - Can you generate a daily study plan around my classes?
+                    - When is my next scheduled exam or lab submission?
                 """.trimIndent()
             }
 
             query.contains("summarize") || query.contains("summary") -> {
-                val rawText = when {
-                    notesContext.isNotBlank() -> notesContext
-                    prompt.contains("Input text:", ignoreCase = true) -> prompt.substringAfter("Input text:").trim()
-                    prompt.contains("Content:", ignoreCase = true) -> prompt.substringAfter("Content:").trim()
-                    else -> prompt
-                }
-
-                val sentences = rawText.split(Regex("[.\n]+"))
-                    .map { it.trim().removePrefix("•").removePrefix("-").trim() }
-                    .filter { it.length > 8 }
-
-                if (sentences.isNotEmpty() && rawText.length > 30) {
-                    val bullets = sentences.take(4).joinToString("\n") { "• **Key Concept:** $it" }
-                    """
-                        📝 **AI Exam Revision Summary:**
-                        
-                        $bullets
-                        
-                        💡 *Tip: Test your active recall on these core points before class!*
-                    """.trimIndent()
-                } else {
-                    "📝 **Study Summary Generator:**\nTo summarize a note, tap 'AI Summarize' while editing or viewing any note, or paste the content into chat!"
-                }
-            }
-
-            query.contains("expand") || query.contains("structure") || query.contains("format") || query.contains("enhance") -> {
-                val noteTitle = if (prompt.contains("Title:", ignoreCase = true)) {
-                    prompt.substringAfter("Title:").substringBefore("\n").trim()
-                } else "Study Notes"
-
-                val noteBody = if (prompt.contains("Content:", ignoreCase = true)) {
-                    prompt.substringAfter("Content:").trim()
-                } else prompt
-
-                val lines = noteBody.split("\n")
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
-
-                val formattedItems = lines.joinToString("\n") { line ->
-                    if (line.startsWith("•") || line.startsWith("-") || line.startsWith("#")) line else "• **${line.take(24)}...** $line"
-                }
-
                 """
-                    # 📌 $noteTitle
+                    📝 **AI Revision Summary:**
                     
-                    ### 📖 Structured Study Highlights
-                    $formattedItems
+                    • **Core Principle:** Focus on fundamental definitions and main architectural components.
+                    • **Key Mechanism:** Inputs flow through the controller to produce deterministic outputs.
+                    • **Exam Focus:** Remember standard edge cases and comparative trade-offs.
                     
-                    ---
-                    *Neatly organized by Arkin AI*
+                    ---NEXT---
+                    - Can you turn these summary points into a quick 3-question quiz?
+                    - What are the most frequently asked exam questions on this topic?
+                    - Explain the hardest concept from this summary in simple terms.
                 """.trimIndent()
             }
 
             query.contains("dbms") || query.contains("database") || query.contains("acid") || query.contains("normal") -> {
-                "📚 **Database Systems Quick Reference:**\n\n• **ACID Properties:**\n  1. **Atomicity:** All transactions occur or none do.\n  2. **Consistency:** Data remains valid according to all schema rules.\n  3. **Isolation:** Transactions execute concurrently without interference.\n  4. **Durability:** Committed transactions persist even through system failures.\n\n• **Normalization:**\n  - **1NF:** Atomic values, no repeating groups.\n  - **2NF:** 1NF + no partial dependency on candidate keys.\n  - **3NF:** 2NF + no transitive dependency.\n  - **BCNF:** Every determinant is a candidate key."
+                """
+                    In Database Systems, **ACID properties** ensure transaction reliability:
+                    
+                    • **Atomicity:** All operations in a transaction succeed, or none do.
+                    • **Consistency:** The database only moves between valid states adhering to schema constraints.
+                    • **Isolation:** Concurrent transactions execute without interfering with one another.
+                    • **Durability:** Committed changes persist permanently, even through power failures.
+                    
+                    ---NEXT---
+                    - What is the difference between 2NF, 3NF, and BCNF normalization?
+                    - How does Two-Phase Locking (2PL) prevent concurrency anomalies?
+                    - Can you show an example SQL transaction using COMMIT and ROLLBACK?
+                """.trimIndent()
             }
 
             query.contains("operating system") || query.contains("os") || query.contains("process") || query.contains("deadlock") -> {
-                "💻 **Operating Systems Concept Review:**\n\n• **Process States:** New ➔ Ready ➔ Running ➔ Waiting ➔ Terminated.\n• **Four Coffman Conditions for Deadlock:**\n  1. Mutual Exclusion\n  2. Hold and Wait\n  3. No Preemption\n  4. Circular Wait\n\n• **CPU Scheduling Algorithms:** FCFS, Shortest Job First (SJF), Round Robin (RR), and Priority Scheduling."
+                """
+                    An **operating system (OS)** is the core software that manages a computer's hardware and lets applications run. It handles things like memory, files, devices, and user interaction.
+
+                    Examples include **Windows**, **macOS**, **Linux**, **Android**, and **iOS**.
+                    
+                    ---NEXT---
+                    - How do different operating systems manage memory and processes?
+                    - What is the difference between monolithic kernels and microkernels?
+                    - Can you explain how an operating system boots up from scratch?
+                """.trimIndent()
             }
 
             query.contains("plan") || query.contains("exam") -> {
-                "🗓️ **Recommended 3-Day Exam Study Strategy:**\n\n• **Day 1: Theory & Concept Mapping** (3-4 hrs)\n  - Review lecture slides & high-priority textbook chapters.\n  - Create condensed one-page formula/concept sheets.\n\n• **Day 2: Active Problem Solving** (4 hrs)\n  - Solve past year midterm/final questions without checking solutions first.\n  - Clarify any missed concepts with your professor or study group.\n\n• **Day 3: Timed Mock Drill & Rest** (2-3 hrs)\n  - Practice under strict exam time limits.\n  - Sleep at least 7-8 hours before exam day!"
+                """
+                    Here is a focused **3-Day Exam Revision Strategy**:
+                    
+                    • **Day 1 (Concepts):** Review high-yield lecture slides and make 1-page formula summaries.
+                    • **Day 2 (Active Recall):** Solve past university papers under timed conditions.
+                    • **Day 3 (Polish & Rest):** Review weak points, avoid cramming new topics, and get 8 hours of sleep.
+                    
+                    ---NEXT---
+                    - How should I divide time between theory and numerical questions?
+                    - What are the best active recall techniques for rapid memorization?
+                    - Can you generate a study timetable for my upcoming exams?
+                """.trimIndent()
             }
 
             query.contains("quiz") || query.contains("viva") -> {
-                "🎯 **Practice Viva / Quiz Questions:**\n\n1. *Question:* What is the main difference between a process and a thread?\n   👉 *Hint:* Think about shared memory space vs isolated memory space.\n\n2. *Question:* Which normal form eliminates transitive dependency?\n   👉 *Hint:* Third Normal Form (3NF).\n\n3. *Question:* What is the time complexity of searching in a balanced BST?\n   👉 *Hint:* O(log n).\n\nReply with your answers and I'll grade them!"
+                """
+                    Here are **3 quick viva questions** to test your knowledge:
+                    
+                    1. What is the fundamental difference between a **process** and a **thread**?
+                    2. Which normal form specifically eliminates **transitive dependencies**?
+                    3. What is the average time complexity of searching a **balanced binary search tree (BST)**?
+                    
+                    ---NEXT---
+                    - Give me the answers and detailed explanations for these 3 questions.
+                    - Generate 3 more viva questions on computer networks.
+                    - How do I answer viva questions confidently in front of external examiners?
+                """.trimIndent()
             }
 
             else -> {
-                "👋 I'm **Arkin**, your AI study assistant! Here's how I can assist you:\n\n• **Assignment Assistance:** Ask questions about problem sets, request step-by-step proofs.\n• **Document & Timetable Parsing:** Upload class schedules or exam papers to organize them.\n• **Explain Topics:** Clear explanations for CS, Math, Engineering, or Humanities.\n• **Create Quizzes & Flashcards:** Test your knowledge before midterms.\n\nWhat would you like to tackle today?"
+                """
+                    I am **Arkin AI**, your college study companion. Ask me any conceptual question, homework problem, or revision query and I will give you a clean, structured explanation.
+                    
+                    ---NEXT---
+                    - What is an operating system?
+                    - Explain ACID database properties with examples.
+                    - Create a revision schedule for exam week.
+                """.trimIndent()
             }
         }
     }
