@@ -122,14 +122,6 @@ fun ArkinBottomNavBar(
                     unselectedIcon = Icons.Rounded.Psychology,
                     onClick = { onTabSelected(BottomNavTab.AI_ASSISTANT) }
                 )
-
-                NavTabItem(
-                    title = "Profile",
-                    isSelected = currentTab == BottomNavTab.PROFILE,
-                    selectedIcon = Icons.Filled.Person,
-                    unselectedIcon = Icons.Outlined.Person,
-                    onClick = { onTabSelected(BottomNavTab.PROFILE) }
-                )
             }
         }
     }

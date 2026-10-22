@@ -97,6 +97,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import com.example.arkin.ui.components.ConfirmationDialog
+import com.example.arkin.ui.components.SecurePinChangeDialog
+
 @Composable
 fun DashboardScreen(viewModel: ArkinViewModel) {
     val profile by viewModel.studentProfile.collectAsState()
@@ -118,6 +127,47 @@ fun DashboardScreen(viewModel: ArkinViewModel) {
     val scrollState = rememberScrollState()
 
     var isDrawerOpen by remember { mutableStateOf(false) }
+    var isChangePinDialogOpen by remember { mutableStateOf(false) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showLogoutConfirmDialog by remember { mutableStateOf(false) }
+
+    if (isChangePinDialogOpen) {
+        SecurePinChangeDialog(
+            onDismiss = { isChangePinDialogOpen = false },
+            onPinSuccessfullyChanged = { newPin ->
+                viewModel.changeLockerPin(newPin)
+                isChangePinDialogOpen = false
+            }
+        )
+    }
+
+    if (showDeleteConfirmDialog) {
+        ConfirmationDialog(
+            title = "Delete Account Data?",
+            message = "This will remove all merged notes, tasks, homework, and timetable entries from this account so you can start completely fresh. Are you sure?",
+            confirmButtonText = "Delete All Data",
+            icon = Icons.Default.DeleteSweep,
+            onConfirm = {
+                showDeleteConfirmDialog = false
+                viewModel.resetAccountData(clearCloud = true)
+            },
+            onDismiss = { showDeleteConfirmDialog = false }
+        )
+    }
+
+    if (showLogoutConfirmDialog) {
+        ConfirmationDialog(
+            title = "Log Out?",
+            message = "Are you sure you want to log out of your account?",
+            confirmButtonText = "Log Out",
+            icon = Icons.AutoMirrored.Filled.ExitToApp,
+            onConfirm = {
+                showLogoutConfirmDialog = false
+                viewModel.logout()
+            },
+            onDismiss = { showLogoutConfirmDialog = false }
+        )
+    }
 
     if (isDrawerOpen) {
         Dialog(
@@ -216,45 +266,124 @@ fun DashboardScreen(viewModel: ArkinViewModel) {
 
                         Spacer(modifier = Modifier.height(20.dp))
 
-                        // Navigation Destinations
-                        val menuDestinations = listOf(
-                            Triple("My Profile", Icons.Default.Person, AppScreen.PROFILE),
-                            Triple("Timetable & Exams", Icons.Rounded.CalendarToday, AppScreen.TIMETABLE),
-                            Triple("Homework & Deadlines", Icons.Rounded.Book, AppScreen.HOMEWORK),
-                            Triple("To-Do & Tasks", Icons.Rounded.Checklist, AppScreen.TODO),
-                            Triple("Notes & Documents", Icons.Rounded.Description, AppScreen.NOTES),
-                            Triple("Reminders", Icons.Rounded.NotificationsActive, AppScreen.REMINDERS),
-                            Triple("AI Document Organizer", Icons.AutoMirrored.Filled.Assignment, AppScreen.AI_DOC_ORGANIZER),
-                            Triple("Study Locker (Vault)", Icons.Rounded.Lock, AppScreen.LOCKER),
-                            Triple("Academic Analytics", Icons.Rounded.BarChart, AppScreen.ANALYTICS)
+                        Text(
+                            text = "Settings",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)
                         )
 
-                        menuDestinations.forEach { (label, icon, screen) ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable {
-                                        isDrawerOpen = false
-                                        viewModel.navigateTo(screen)
-                                    }
-                                    .padding(vertical = 12.dp, horizontal = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                        // 1. Dark Mode
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .padding(vertical = 10.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = icon,
-                                    contentDescription = label,
+                                    imageVector = Icons.Default.DarkMode,
+                                    contentDescription = "Dark Mode",
                                     tint = ArkinPrimary,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.width(14.dp))
                                 Text(
-                                    text = label,
+                                    text = "Dark Mode",
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
+                            Switch(
+                                checked = isDark,
+                                onCheckedChange = { viewModel.toggleDarkMode() },
+                                colors = SwitchDefaults.colors(checkedThumbColor = ArkinPrimary)
+                            )
+                        }
+
+                        // 2. Change Locker PIN
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    isDrawerOpen = false
+                                    isChangePinDialogOpen = true
+                                }
+                                .padding(vertical = 12.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Change Locker PIN",
+                                tint = AccentLockerText,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Text(
+                                text = "Change Locker PIN",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        // 3. Delete / Reset Account Data
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    isDrawerOpen = false
+                                    showDeleteConfirmDialog = true
+                                }
+                                .padding(vertical = 12.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteSweep,
+                                contentDescription = "Delete Account Data",
+                                tint = Color(0xFFEF4444),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Text(
+                                text = "Delete Account Data",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFFEF4444)
+                            )
+                        }
+
+                        // 4. Log Out
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    isDrawerOpen = false
+                                    showLogoutConfirmDialog = true
+                                }
+                                .padding(vertical = 12.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ExitToApp,
+                                contentDescription = "Log Out",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Text(
+                                text = "Log Out",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         }
                     }
                 }
