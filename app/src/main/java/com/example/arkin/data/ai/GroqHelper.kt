@@ -32,7 +32,7 @@ object GroqHelper {
     const val PRIMARY_MODEL = "openai/gpt-oss-120b"
     const val FALLBACK_MODEL = "openai/gpt-oss-20b"
 
-    private const val BACKUP_API_KEY = "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"
+    private const val BACKUP_API_KEY = "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"
 
     /**
      * Optional Backend / Firebase Cloud Functions proxy URL for production.

@@ -19,7 +19,7 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    buildConfigField("String", "GROQ_API_KEY", "\"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\"")
+    buildConfigField("String", "GROQ_API_KEY", "\"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\"")
   }
 
   signingConfigs {
