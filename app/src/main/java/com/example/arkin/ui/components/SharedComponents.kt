@@ -12,6 +12,11 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -509,7 +514,54 @@ fun NoteCard(
 
             if (!note.attachmentName.isNullOrBlank()) {
                 val context = androidx.compose.ui.platform.LocalContext.current
+                val thumbBitmap = remember(note.attachmentUri) {
+                    com.example.arkin.util.FileViewerHelper.getDecodedThumbnail(context, note.attachmentUri)
+                }
+
                 Spacer(modifier = Modifier.height(8.dp))
+
+                if (thumbBitmap != null) {
+                    Surface(
+                        onClick = {
+                            com.example.arkin.util.FileViewerHelper.openDocument(
+                                context = context,
+                                uriString = note.attachmentUri,
+                                fileName = note.attachmentName,
+                                onUriUpdated = { newPath ->
+                                    onAttachmentUpdated?.invoke(newPath)
+                                }
+                            )
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(110.dp)
+                            .padding(bottom = 6.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.BottomEnd) {
+                            Image(
+                                bitmap = thumbBitmap.asImageBitmap(),
+                                contentDescription = "Note Image Attachment",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            Surface(
+                                color = Color.Black.copy(alpha = 0.6f),
+                                shape = RoundedCornerShape(topStart = 6.dp),
+                                modifier = Modifier.padding(2.dp)
+                            ) {
+                                Text(
+                                    text = "🔍 View Full Image",
+                                    color = Color.White,
+                                    fontSize = 9.sp,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Surface(
                     onClick = {
                         com.example.arkin.util.FileViewerHelper.openDocument(
@@ -811,11 +863,13 @@ fun TimetableCard(
 fun ReminderRow(
     reminder: ReminderEntity,
     onDelete: () -> Unit,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val (bgColor, textColor) = getCategoryColor(reminder.colorKey)
 
     Surface(
+        onClick = { onClick?.invoke() },
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surface,
         shadowElevation = 1.dp,

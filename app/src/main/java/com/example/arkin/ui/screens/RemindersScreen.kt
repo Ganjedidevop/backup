@@ -149,7 +149,8 @@ fun RemindersScreen(viewModel: ArkinViewModel) {
                 items(reminders, key = { it.id }) { reminder ->
                     ReminderRow(
                         reminder = reminder,
-                        onDelete = { reminderToDelete = reminder }
+                        onDelete = { reminderToDelete = reminder },
+                        onClick = { viewModel.triggerReminderAlert(reminder) }
                     )
                 }
             }

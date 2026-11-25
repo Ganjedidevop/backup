@@ -28,6 +28,10 @@ import com.example.arkin.model.ChatMessage
 import com.example.arkin.model.DocProcessingState
 import com.example.arkin.model.DocUploadType
 import com.example.arkin.model.ParsedTimetableClass
+import com.example.arkin.util.AlarmScheduler
+import java.util.Calendar
+import java.util.Locale
+import java.text.SimpleDateFormat
 import com.example.arkin.util.DocumentTextExtractor
 import com.example.arkin.util.ExtractionResult
 import com.example.arkin.util.StudentProfileValidator
@@ -153,6 +157,8 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
     val allReminders: StateFlow<List<ReminderEntity>> = reminderDao.getAllReminders()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val activeReminderAlert = MutableStateFlow<ReminderEntity?>(null)
+
     // Exam Results for Study Analyser
     val allExamResults: StateFlow<List<ExamResultEntity>> = examResultDao.getAllExamResults()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -245,8 +251,20 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                     if (remoteProfile != null) {
                         profileDao.updateProfile(remoteProfile)
                     }
-                    FirestoreManager.syncFirestoreToLocal(db, merge = true)
+                    FirestoreManager.syncFirestoreToLocal(db, context = getApplication(), merge = true)
                     lastFirestoreSyncTime.value = System.currentTimeMillis()
+                }
+            }
+
+            allReminders.collect { list ->
+                val now = System.currentTimeMillis()
+                val due = list.firstOrNull { rem ->
+                    if (rem.isCompleted) return@firstOrNull false
+                    val epoch = AlarmScheduler.parseDateTimeToEpoch(rem.dueText)
+                    epoch != null && epoch <= now && (now - epoch) < 24 * 60 * 60 * 1000L
+                }
+                if (due != null && activeReminderAlert.value == null) {
+                    activeReminderAlert.value = due
                 }
             }
         }
@@ -1028,6 +1046,37 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun dismissReminderAlert() {
+        activeReminderAlert.value = null
+    }
+
+    fun completeReminderAlert(reminder: ReminderEntity) {
+        viewModelScope.launch {
+            val updated = reminder.copy(isCompleted = true)
+            reminderDao.updateReminder(updated)
+            if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
+                FirestoreManager.saveReminder(updated)
+            }
+            activeReminderAlert.value = null
+            showToast("Reminder marked as done! ✅")
+        }
+    }
+
+    fun snoozeReminderAlert(reminder: ReminderEntity) {
+        viewModelScope.launch {
+            val cal = Calendar.getInstance().apply { add(Calendar.MINUTE, 10) }
+            val newDue = "Today, " + SimpleDateFormat("hh:mm a", Locale.US).format(cal.time)
+            val updated = reminder.copy(dueText = newDue)
+            reminderDao.updateReminder(updated)
+            activeReminderAlert.value = null
+            showToast("Snoozed for 10 minutes ⏱️")
+        }
+    }
+
+    fun triggerReminderAlert(reminder: ReminderEntity) {
+        activeReminderAlert.value = reminder
+    }
+
     // Exam Results (Study Analyser)
     fun addExamResult(subject: String, examName: String, marksObtained: Float, totalMarks: Float, semester: String = "Semester 4") {
         if (subject.isBlank() || examName.isBlank() || totalMarks <= 0f) return
@@ -1061,15 +1110,17 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
     fun addVaultItem(title: String, category: String, content: String, attachmentName: String? = null) {
         if (title.isBlank()) return
         viewModelScope.launch {
-            vaultItemDao.insertVaultItem(
-                VaultItemEntity(
-                    title = title.trim(),
-                    category = category.trim(),
-                    content = content.trim(),
-                    attachmentName = attachmentName,
-                    fileType = "TEXT"
-                )
+            val entity = VaultItemEntity(
+                title = title.trim(),
+                category = category.trim(),
+                content = content.trim(),
+                attachmentName = attachmentName,
+                fileType = "TEXT"
             )
+            val id = vaultItemDao.insertVaultItem(entity)
+            if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
+                FirestoreManager.saveVaultItem(entity.copy(id = id), getApplication())
+            }
             showToast("Item securely saved in Vault 🔒")
         }
     }
@@ -1080,18 +1131,20 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
             val context = getApplication<Application>().applicationContext
             val encryptResult = VaultSecurityManager.encryptAndStoreAttachment(context, uri, customName)
             encryptResult.onSuccess { enc ->
-                vaultItemDao.insertVaultItem(
-                    VaultItemEntity(
-                        title = title.trim(),
-                        category = category.trim(),
-                        content = "",
-                        attachmentUri = enc.encryptedRelativePath,
-                        attachmentName = enc.originalFileName,
-                        fileType = fileType,
-                        fileSize = enc.fileSize,
-                        mimeType = enc.mimeType
-                    )
+                val entity = VaultItemEntity(
+                    title = title.trim(),
+                    category = category.trim(),
+                    content = "",
+                    attachmentUri = enc.encryptedRelativePath,
+                    attachmentName = enc.originalFileName,
+                    fileType = fileType,
+                    fileSize = enc.fileSize,
+                    mimeType = enc.mimeType
                 )
+                val id = vaultItemDao.insertVaultItem(entity)
+                if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
+                    FirestoreManager.saveVaultItem(entity.copy(id = id), getApplication())
+                }
                 showToast("File encrypted & secured in Vault 🔒")
             }.onFailure { err ->
                 showToast("Encryption failed: ${err.message}")
@@ -1106,6 +1159,9 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                 VaultSecurityManager.deleteEncryptedFile(context, item.attachmentUri)
             }
             vaultItemDao.deleteVaultItem(item)
+            if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
+                FirestoreManager.deleteVaultItem(item.id)
+            }
             showToast("Vault item deleted")
         }
     }
@@ -2312,7 +2368,7 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
         }
         isFirestoreSyncing.value = true
         viewModelScope.launch {
-            val result = FirestoreManager.syncLocalToFirestore(db)
+            val result = FirestoreManager.syncLocalToFirestore(db, getApplication())
             isFirestoreSyncing.value = false
             if (result.isSuccess) {
                 lastFirestoreSyncTime.value = System.currentTimeMillis()
@@ -2331,7 +2387,7 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
         }
         isFirestoreSyncing.value = true
         viewModelScope.launch {
-            val result = FirestoreManager.syncFirestoreToLocal(db, replaceAll = true)
+            val result = FirestoreManager.syncFirestoreToLocal(db, getApplication(), replaceAll = true)
             isFirestoreSyncing.value = false
             if (result.isSuccess) {
                 lastFirestoreSyncTime.value = System.currentTimeMillis()
@@ -2345,10 +2401,12 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
 
     fun logout() {
         viewModelScope.launch {
-            clearLocalUserData()
+            _isVaultUnlocked.value = false
+            _enteredPin.value = ""
+            _isPinError.value = false
             FirebaseAuthHelper.signOut()
             navigateTo(AppScreen.AUTH, addToStack = false)
-            showToast("Signed out. Device data cleared.")
+            showToast("Signed out. Your device data & vault remain secure.")
         }
     }
 }

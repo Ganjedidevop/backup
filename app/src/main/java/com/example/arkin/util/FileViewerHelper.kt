@@ -104,65 +104,78 @@ object FileViewerHelper {
 
             // 1. First, check if the URI directly points to an existing file on disk
             var fileToOpen: File? = when {
-                // Direct absolute path
-                uriString.startsWith("/") -> File(uriString)
+                // Direct absolute path (must exist and not be empty)
+                uriString.startsWith("/") && File(uriString).exists() && File(uriString).length() > 0 -> File(uriString)
                 // file:// URI
                 uriString.startsWith("file://") -> {
                     val parsed = Uri.parse(uriString)
-                    parsed.path?.let { File(it) }
+                    parsed.path?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
                 }
                 // Relative to attachments directory
-                File(attachmentsDir, uriString.substringAfterLast('/')).exists() -> {
+                File(attachmentsDir, uriString.substringAfterLast('/')).exists() && File(attachmentsDir, uriString.substringAfterLast('/')).length() > 0 -> {
                     File(attachmentsDir, uriString.substringAfterLast('/'))
                 }
                 // Direct file name in filesDir
-                File(context.filesDir, uriString.substringAfterLast('/')).exists() -> {
+                File(context.filesDir, uriString.substringAfterLast('/')).exists() && File(context.filesDir, uriString.substringAfterLast('/')).length() > 0 -> {
                     File(context.filesDir, uriString.substringAfterLast('/'))
+                }
+                // Check cacheDir
+                File(context.cacheDir, uriString.substringAfterLast('/')).exists() && File(context.cacheDir, uriString.substringAfterLast('/')).length() > 0 -> {
+                    File(context.cacheDir, uriString.substringAfterLast('/'))
                 }
                 else -> null
             }
 
-            // 2. Check if a cached copy already exists in attachmentsDir matching fileName
+            // 2. Check if a cached copy already exists in attachmentsDir or filesDir matching fileName
             if ((fileToOpen == null || !fileToOpen.exists() || fileToOpen.length() == 0L) && !fileName.isNullOrBlank()) {
-                val candidateFile = File(attachmentsDir, fileName)
-                if (candidateFile.exists() && candidateFile.length() > 0) {
-                    fileToOpen = candidateFile
+                val candidateAttachments = File(attachmentsDir, fileName)
+                val candidateFiles = File(context.filesDir, fileName)
+                val candidateCache = File(context.cacheDir, fileName)
+                fileToOpen = when {
+                    candidateAttachments.exists() && candidateAttachments.length() > 0 -> candidateAttachments
+                    candidateFiles.exists() && candidateFiles.length() > 0 -> candidateFiles
+                    candidateCache.exists() && candidateCache.length() > 0 -> candidateCache
+                    else -> null
                 }
             }
 
-            // 3. If file is not yet a local file, handle content:// URIs
+            // 3. If file is not yet a local file, try content URI cache
             if (fileToOpen == null || !fileToOpen.exists() || fileToOpen.length() == 0L) {
                 if (uriString.startsWith("content://")) {
                     val srcUri = Uri.parse(uriString)
-
-                    // A. Attempt to read and permanently cache the content URI
                     val cached = tryCacheContentUri(context, srcUri, fileName)
                     if (cached != null && cached.exists() && cached.length() > 0) {
                         fileToOpen = cached
                         onUriUpdated?.invoke(cached.absolutePath)
-                    } else {
-                        // B. If permission expired or file moved, search MediaStore for original file by name
-                        val recovered = tryFindInMediaStore(context, fileName)
-                        if (recovered != null && recovered.exists() && recovered.length() > 0) {
-                            fileToOpen = recovered
-                            onUriUpdated?.invoke(recovered.absolutePath)
-                        }
                     }
                 }
             }
 
-            // 4. If we still do not have an accessible file, inform the user cleanly instead of launching a broken intent
+            // 4. Exhaustive MediaStore recovery by display name, original name, or fallback filename
             if (fileToOpen == null || !fileToOpen.exists() || fileToOpen.length() == 0L) {
+                val nameToSearch = fileName?.takeIf { it.isNotBlank() }
+                    ?: uriString.substringAfterLast('/').takeIf { it.isNotBlank() }
+
+                val recovered = tryFindInMediaStore(context, nameToSearch)
+                if (recovered != null && recovered.exists() && recovered.length() > 0) {
+                    fileToOpen = recovered
+                    onUriUpdated?.invoke(recovered.absolutePath)
+                }
+            }
+
+            // 5. If still not accessible, notify the user cleanly
+            if (fileToOpen == null || !fileToOpen.exists() || fileToOpen.length() == 0L) {
+                val displayName = fileName ?: uriString.substringAfterLast('/')
                 Log.w(TAG, "File cannot be accessed: $uriString (name: $fileName)")
                 Toast.makeText(
                     context,
-                    "Cannot open attachment: Permission expired or file moved.\n\nPlease edit this note to re-attach the file to save it permanently.",
+                    "Attachment '$displayName' is not accessible on device storage.\n\nPlease edit this item to attach the file or photo again.",
                     Toast.LENGTH_LONG
                 ).show()
                 return
             }
 
-            // 5. Open via FileProvider with proper package authority
+            // 6. Open via FileProvider with proper package authority
             val authority = "${context.packageName}.fileprovider"
             val providerUri = FileProvider.getUriForFile(context, authority, fileToOpen)
             val mimeType = resolveMimeType(fileToOpen.name, fileName)
@@ -198,13 +211,70 @@ object FileViewerHelper {
             Log.e(TAG, "SecurityException opening file: $uriString", e)
             Toast.makeText(
                 context,
-                "Cannot access file: permission expired. Please edit the note and re-attach the file to save it permanently.",
+                "Cannot access file permission. Please re-attach the file to save it permanently.",
                 Toast.LENGTH_LONG
             ).show()
         } catch (e: Exception) {
             Log.e(TAG, "Exception opening file: ${e.message}", e)
             Toast.makeText(context, "Failed to open file: ${e.localizedMessage ?: "Unknown error"}", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * Safely loads and decodes an image thumbnail bitmap for Notes & Homework preview.
+     * Downsamples to avoid memory pressure and returns null if not an accessible image.
+     */
+    fun getDecodedThumbnail(context: Context, uriString: String?): android.graphics.Bitmap? {
+        if (uriString.isNullOrBlank()) return null
+        return try {
+            val attachmentsDir = File(context.filesDir, ATTACHMENTS_DIR)
+            val file = when {
+                uriString.startsWith("/") -> File(uriString)
+                uriString.startsWith("file://") -> Uri.parse(uriString).path?.let { File(it) }
+                File(attachmentsDir, uriString.substringAfterLast('/')).exists() -> File(attachmentsDir, uriString.substringAfterLast('/'))
+                File(context.filesDir, uriString.substringAfterLast('/')).exists() -> File(context.filesDir, uriString.substringAfterLast('/'))
+                else -> null
+            }
+
+            if (file != null && file.exists() && file.length() > 0) {
+                val ext = file.extension.lowercase()
+                if (ext in listOf("jpg", "jpeg", "png", "webp", "bmp")) {
+                    val boundsOpts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, boundsOpts)
+                    val sampleSize = calculateInSampleSize(boundsOpts, 320, 320)
+                    val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                    return android.graphics.BitmapFactory.decodeFile(file.absolutePath, opts)
+                }
+            }
+
+            if (uriString.startsWith("content://")) {
+                val uri = Uri.parse(uriString)
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    val boundsOpts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeStream(stream, null, boundsOpts)
+                }
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 }
+                    return android.graphics.BitmapFactory.decodeStream(stream, null, opts)
+                }
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun calculateInSampleSize(options: android.graphics.BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val (height: Int, width: Int) = options.outHeight to options.outWidth
+        var inSampleSize = 1
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight: Int = height / 2
+            val halfWidth: Int = width / 2
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
     }
 
     private fun tryCacheContentUri(context: Context, srcUri: Uri, fileName: String?): File? {

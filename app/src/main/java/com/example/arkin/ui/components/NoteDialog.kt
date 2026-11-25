@@ -7,6 +7,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -239,6 +242,42 @@ fun NoteDialog(
 
                 // Attachment Section
                 if (attachmentName != null) {
+                    val dialogThumb = remember(attachmentUri) {
+                        com.example.arkin.util.FileViewerHelper.getDecodedThumbnail(context, attachmentUri)
+                    }
+
+                    if (dialogThumb != null) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(130.dp)
+                                .padding(bottom = 8.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.BottomEnd) {
+                                Image(
+                                    bitmap = dialogThumb.asImageBitmap(),
+                                    contentDescription = "Attached Image Preview",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Surface(
+                                    color = Color.Black.copy(alpha = 0.6f),
+                                    shape = RoundedCornerShape(topStart = 6.dp),
+                                    modifier = Modifier.padding(2.dp)
+                                ) {
+                                    Text(
+                                        text = "Photo Attached",
+                                        color = Color.White,
+                                        fontSize = 9.sp,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant,

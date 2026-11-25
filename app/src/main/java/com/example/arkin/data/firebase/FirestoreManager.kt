@@ -11,6 +11,10 @@ import com.example.arkin.data.model.TimetableEntity
 import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
+import android.content.Context
+import com.example.arkin.data.model.VaultItemEntity
+import java.io.File
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -332,13 +336,118 @@ object FirestoreManager {
     }
 
     // ==========================================
+    // Vault Items
+    // ==========================================
+
+    suspend fun saveVaultItem(item: VaultItemEntity, context: Context? = null): Result<Unit> = withContext(Dispatchers.IO) {
+        val uid = FirebaseAuthHelper.currentUserId ?: return@withContext Result.failure(IllegalStateException("No user"))
+        try {
+            var encryptedBase64: String? = null
+            if (context != null && !item.attachmentUri.isNullOrBlank()) {
+                val encFile = if (item.attachmentUri.startsWith("/")) {
+                    File(item.attachmentUri)
+                } else {
+                    File(context.filesDir, item.attachmentUri)
+                }
+                if (encFile.exists() && encFile.length() in 1..(800 * 1024)) {
+                    val bytes = encFile.readBytes()
+                    encryptedBase64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                }
+            }
+
+            val data = hashMapOf<String, Any?>(
+                "id" to item.id,
+                "title" to item.title,
+                "category" to item.category,
+                "content" to item.content,
+                "attachmentUri" to item.attachmentUri,
+                "attachmentName" to item.attachmentName,
+                "fileType" to item.fileType,
+                "fileSize" to item.fileSize,
+                "mimeType" to item.mimeType,
+                "timestamp" to item.timestamp,
+                "encryptedPayloadBase64" to encryptedBase64
+            )
+            userDoc(uid).collection("vault_items").document(item.id.toString()).set(data, SetOptions.merge()).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteVaultItem(vaultItemId: Long): Result<Unit> = withContext(Dispatchers.IO) {
+        val uid = FirebaseAuthHelper.currentUserId ?: return@withContext Result.failure(IllegalStateException("No user"))
+        try {
+            userDoc(uid).collection("vault_items").document(vaultItemId.toString()).delete().await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun saveVaultSecurityConfig(context: Context, uid: String) = withContext(Dispatchers.IO) {
+        try {
+            val prefs = context.getSharedPreferences("arkin_vault_prefs", Context.MODE_PRIVATE)
+            val pinHash = prefs.getString("vault_pin_hash", null)
+            val pinSalt = prefs.getString("vault_pin_salt", null)
+            val question = prefs.getString("vault_security_question", null)
+            val ansHash = prefs.getString("vault_security_ans_hash", null)
+            val ansSalt = prefs.getString("vault_security_ans_salt", null)
+            val email = prefs.getString("vault_recovery_email", null)
+
+            if (!pinHash.isNullOrBlank() && !pinSalt.isNullOrBlank()) {
+                val secData = hashMapOf<String, Any?>(
+                    "pinHash" to pinHash,
+                    "pinSalt" to pinSalt,
+                    "question" to question,
+                    "ansHash" to ansHash,
+                    "ansSalt" to ansSalt,
+                    "recoveryEmail" to email,
+                    "updatedAt" to System.currentTimeMillis()
+                )
+                userDoc(uid).collection("security").document("vault_config").set(secData, SetOptions.merge()).await()
+            }
+        } catch (_: Exception) {}
+    }
+
+    suspend fun restoreVaultSecurityConfig(context: Context, uid: String) = withContext(Dispatchers.IO) {
+        try {
+            val prefs = context.getSharedPreferences("arkin_vault_prefs", Context.MODE_PRIVATE)
+            // Only restore if local vault PIN is not set yet (e.g. fresh install or deleted app)
+            if (prefs.getString("vault_pin_hash", null) == null) {
+                val doc = userDoc(uid).collection("security").document("vault_config").get().await()
+                if (doc.exists()) {
+                    val pinHash = doc.getString("pinHash")
+                    val pinSalt = doc.getString("pinSalt")
+                    val question = doc.getString("question")
+                    val ansHash = doc.getString("ansHash")
+                    val ansSalt = doc.getString("ansSalt")
+                    val email = doc.getString("recoveryEmail")
+
+                    if (!pinHash.isNullOrBlank() && !pinSalt.isNullOrBlank()) {
+                        prefs.edit().apply {
+                            putString("vault_pin_hash", pinHash)
+                            putString("vault_pin_salt", pinSalt)
+                            if (!question.isNullOrBlank()) putString("vault_security_question", question)
+                            if (!ansHash.isNullOrBlank()) putString("vault_security_ans_hash", ansHash)
+                            if (!ansSalt.isNullOrBlank()) putString("vault_security_ans_salt", ansSalt)
+                            if (!email.isNullOrBlank()) putString("vault_recovery_email", email)
+                            apply()
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    // ==========================================
     // Bidirectional Bulk Sync
     // ==========================================
 
     /**
      * Upload all local Room database entries to Firestore under `users/{uid}`.
      */
-    suspend fun syncLocalToFirestore(db: ArkinDatabase): Result<Int> = withContext(Dispatchers.IO) {
+    suspend fun syncLocalToFirestore(db: ArkinDatabase, context: Context? = null): Result<Int> = withContext(Dispatchers.IO) {
         val uid = FirebaseAuthHelper.currentUserId ?: return@withContext Result.failure(IllegalStateException("Please log in to sync with Firebase"))
         try {
             var itemsSynced = 0
@@ -392,6 +501,16 @@ object FirestoreManager {
                 itemsSynced++
             }
 
+            // 8. Vault Items
+            val vaultItems = db.vaultItemDao().getAllVaultItemsSync()
+            vaultItems.forEach { vItem ->
+                saveVaultItem(vItem, context).getOrThrow()
+                itemsSynced++
+            }
+            if (context != null) {
+                saveVaultSecurityConfig(context, uid)
+            }
+
             Result.success(itemsSynced)
         } catch (e: Exception) {
             Result.failure(mapFirestoreException(e))
@@ -403,6 +522,7 @@ object FirestoreManager {
      */
     suspend fun syncFirestoreToLocal(
         db: ArkinDatabase,
+        context: Context? = null,
         merge: Boolean = true,
         replaceAll: Boolean = false
     ): Result<Int> = withContext(Dispatchers.IO) {
@@ -602,6 +722,55 @@ object FirestoreManager {
                 }
             }
 
+            // 8. Vault Items
+            val vaultSnap = userDoc(uid).collection("vault_items").get().await()
+            if (!vaultSnap.isEmpty) {
+                for (doc in vaultSnap.documents) {
+                    try {
+                        val id = if (merge) (doc.getLong("id") ?: 0L) else 0L
+                        val title = doc.getString("title") ?: "Vault Item"
+                        val category = doc.getString("category") ?: "Private Note"
+                        val content = doc.getString("content") ?: ""
+                        val fileType = doc.getString("fileType") ?: "TEXT"
+                        val attachmentName = doc.getString("attachmentName")
+                        val fileSize = doc.getLong("fileSize") ?: 0L
+                        val mimeType = doc.getString("mimeType")
+                        val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
+
+                        var localAttachmentUri = doc.getString("attachmentUri")
+                        val base64Payload = doc.getString("encryptedPayloadBase64")
+                        if (!base64Payload.isNullOrBlank() && context != null) {
+                            try {
+                                val bytes = android.util.Base64.decode(base64Payload, android.util.Base64.DEFAULT)
+                                val vaultDir = File(context.filesDir, "vault").apply { mkdirs() }
+                                val encFileName = "vault_cloud_${doc.id}.enc"
+                                val localEncFile = File(vaultDir, encFileName)
+                                localEncFile.writeBytes(bytes)
+                                localAttachmentUri = "vault/$encFileName"
+                            } catch (_: Exception) {}
+                        }
+
+                        val entity = VaultItemEntity(
+                            id = id,
+                            title = title,
+                            category = category,
+                            content = content,
+                            attachmentUri = localAttachmentUri,
+                            attachmentName = attachmentName,
+                            fileType = fileType,
+                            fileSize = fileSize,
+                            mimeType = mimeType,
+                            timestamp = timestamp
+                        )
+                        db.vaultItemDao().insertVaultItem(entity)
+                        restoredCount++
+                    } catch (_: Exception) {}
+                }
+            }
+            if (context != null) {
+                restoreVaultSecurityConfig(context, uid)
+            }
+
             Result.success(restoredCount)
         } catch (e: Exception) {
             Result.failure(mapFirestoreException(e))
@@ -615,7 +784,7 @@ object FirestoreManager {
         val uid = uidOverride ?: FirebaseAuthHelper.currentUserId
             ?: return@withContext Result.failure(IllegalStateException("No authenticated user"))
         try {
-            val collections = listOf("notes", "tasks", "homework", "timetable", "exam_results", "reminders")
+            val collections = listOf("notes", "tasks", "homework", "timetable", "exam_results", "reminders", "vault_items")
             for (col in collections) {
                 val snapshot = userDoc(uid).collection(col).get().await()
                 for (doc in snapshot.documents) {

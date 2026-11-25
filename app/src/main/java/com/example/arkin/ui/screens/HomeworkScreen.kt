@@ -8,6 +8,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -83,14 +86,18 @@ fun HomeworkScreen(viewModel: ArkinViewModel) {
     val homeworkList by viewModel.allHomework.collectAsState()
     var isManualAddDialogOpen by remember { mutableStateOf(false) }
     var initialAttachmentUri by remember { mutableStateOf<Uri?>(null) }
+    var initialAttachmentName by remember { mutableStateOf<String?>(null) }
+    var initialAttachmentSize by remember { mutableStateOf<String?>(null) }
 
     // File Picker for Upload Assignment Button - Attaches file to homework item directly without switching screens
     val assignmentFilePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
-            val (savedPath, _) = FileViewerHelper.persistAttachment(context, uri)
+            val (savedPath, name) = FileViewerHelper.persistAttachment(context, uri)
             initialAttachmentUri = Uri.fromFile(java.io.File(savedPath))
+            initialAttachmentName = name
+            initialAttachmentSize = DocumentTextExtractor.formatFileSize(java.io.File(savedPath).length())
             isManualAddDialogOpen = true
         }
     }
@@ -292,9 +299,13 @@ fun HomeworkScreen(viewModel: ArkinViewModel) {
     if (isManualAddDialogOpen) {
         ManualAddAssignmentDialog(
             initialUri = initialAttachmentUri,
+            initialName = initialAttachmentName,
+            initialSize = initialAttachmentSize,
             onDismiss = {
                 isManualAddDialogOpen = false
                 initialAttachmentUri = null
+                initialAttachmentName = null
+                initialAttachmentSize = null
             },
             onAdd = { subject, title, dueDate, dueTime, description, teacher, priority, attUri, attName, attSize ->
                 viewModel.addHomework(
@@ -311,6 +322,8 @@ fun HomeworkScreen(viewModel: ArkinViewModel) {
                 )
                 isManualAddDialogOpen = false
                 initialAttachmentUri = null
+                initialAttachmentName = null
+                initialAttachmentSize = null
             }
         )
     }
@@ -383,8 +396,45 @@ private fun InteractiveHomeworkCard(
                     textDecoration = if (hw.isDone) TextDecoration.LineThrough else TextDecoration.None
                 )
 
-                // Attachment preview pill if document is attached
+                // Attachment preview pill and image thumbnail if document/photo is attached
                 if (!hw.attachmentName.isNullOrBlank()) {
+                    val context = LocalContext.current
+                    val thumbBitmap = remember(hw.attachmentUri) {
+                        FileViewerHelper.getDecodedThumbnail(context, hw.attachmentUri)
+                    }
+
+                    if (thumbBitmap != null) {
+                        Surface(
+                            onClick = onOpenAttachment,
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .padding(top = 8.dp)
+                                .size(width = 130.dp, height = 74.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.BottomEnd) {
+                                Image(
+                                    bitmap = thumbBitmap.asImageBitmap(),
+                                    contentDescription = "Attachment Image Preview",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                Surface(
+                                    color = Color.Black.copy(alpha = 0.6f),
+                                    shape = RoundedCornerShape(topStart = 6.dp),
+                                    modifier = Modifier.padding(2.dp)
+                                ) {
+                                    Text(
+                                        text = "🔍 View Photo",
+                                        color = Color.White,
+                                        fontSize = 9.sp,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Surface(
                         onClick = onOpenAttachment,
                         shape = RoundedCornerShape(8.dp),
@@ -467,6 +517,8 @@ private fun InteractiveHomeworkCard(
 @Composable
 private fun ManualAddAssignmentDialog(
     initialUri: Uri? = null,
+    initialName: String? = null,
+    initialSize: String? = null,
     onDismiss: () -> Unit,
     onAdd: (
         subject: String,
@@ -538,12 +590,12 @@ private fun ManualAddAssignmentDialog(
     var attachedUri by remember { mutableStateOf(initialUri) }
     var attachedFileName by remember {
         mutableStateOf(
-            if (initialUri != null) DocumentTextExtractor.getFileMetadata(context, initialUri).first else null
+            initialName ?: if (initialUri != null) DocumentTextExtractor.getFileMetadata(context, initialUri).first else null
         )
     }
     var attachedFileSize by remember {
         mutableStateOf(
-            if (initialUri != null) {
+            initialSize ?: if (initialUri != null) {
                 val size = DocumentTextExtractor.getFileMetadata(context, initialUri).second
                 DocumentTextExtractor.formatFileSize(size)
             } else null

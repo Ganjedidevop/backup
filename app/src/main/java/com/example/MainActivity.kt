@@ -30,6 +30,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.arkin.model.AppScreen
 import com.example.arkin.ui.components.ArkinBottomNavBar
 import com.example.arkin.ui.components.NoteDialog
+import com.example.arkin.ui.components.ReminderPopupDialog
 import com.example.arkin.ui.screens.AiAssistantScreen
 import com.example.arkin.ui.screens.AnalyticsScreen
 import com.example.arkin.ui.screens.AuthScreen
@@ -104,6 +105,7 @@ fun MainAppContent(viewModel: ArkinViewModel) {
     val editingNote by viewModel.editingNote.collectAsState()
     val isSecureNoteDialog by viewModel.isSecureNoteDialog.collectAsState()
     val toastMessage by viewModel.toastMessage.collectAsState()
+    val activeReminderAlert by viewModel.activeReminderAlert.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -197,6 +199,16 @@ fun MainAppContent(viewModel: ArkinViewModel) {
                     attachmentName = attName
                 )
             }
+        )
+    }
+
+    // Global In-App Reminder Popup Alert
+    activeReminderAlert?.let { reminder ->
+        ReminderPopupDialog(
+            reminder = reminder,
+            onDismiss = { viewModel.dismissReminderAlert() },
+            onMarkCompleted = { viewModel.completeReminderAlert(reminder) },
+            onSnooze = { viewModel.snoozeReminderAlert(reminder) }
         )
     }
 }

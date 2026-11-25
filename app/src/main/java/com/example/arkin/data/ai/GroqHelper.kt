@@ -32,7 +32,7 @@ object GroqHelper {
     const val PRIMARY_MODEL = "openai/gpt-oss-120b"
     const val FALLBACK_MODEL = "openai/gpt-oss-20b"
 
-    private const val BACKUP_API_KEY = "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"
+    private const val BACKUP_API_KEY = ""
 
     /**
      * Optional Backend / Firebase Cloud Functions proxy URL for production.
@@ -95,7 +95,7 @@ object GroqHelper {
                 }
             } else {
                 Log.w(TAG, "Groq call failed with model $modelName, status $statusCode: $responseBody")
-                if (statusCode == 401 && apiKey != BACKUP_API_KEY && proxyUrl.isNullOrBlank()) {
+                if (statusCode == 401 && BACKUP_API_KEY.isNotBlank() && apiKey != BACKUP_API_KEY && proxyUrl.isNullOrBlank()) {
                     Log.w(TAG, "Primary key returned 401 Unauthorized, retrying with backup key...")
                     return executeCompletionsCall(userPrompt, contextNotes, conversationHistory, modelName, BACKUP_API_KEY, null)
                 }

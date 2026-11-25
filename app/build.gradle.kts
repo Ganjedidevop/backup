@@ -19,7 +19,26 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    buildConfigField("String", "GROQ_API_KEY", "\"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\"")
+    val envMap = mutableMapOf<String, String>()
+    listOf(rootProject.file(".env"), project.file(".env")).forEach { envFile ->
+      if (envFile.exists()) {
+        envFile.readLines().forEach { rawLine ->
+          val line = rawLine.trim()
+          if (line.isNotEmpty() && !line.startsWith("#") && line.contains("=")) {
+            val idx = line.indexOf('=')
+            val k = line.substring(0, idx).trim()
+            val v = line.substring(idx + 1).trim().removeSurrounding("\"").removeSurrounding("'")
+            if (k.isNotEmpty() && v.isNotEmpty() && !envMap.containsKey(k)) {
+              envMap[k] = v
+            }
+          }
+        }
+      }
+    }
+    val groqApiKey = (envMap["GROQ_API_KEY"] ?: System.getenv("GROQ_API_KEY") ?: "")
+      .replace("\\", "\\\\")
+      .replace("\"", "\\\"")
+    buildConfigField("String", "GROQ_API_KEY", "\"$groqApiKey\"")
   }
 
   signingConfigs {
