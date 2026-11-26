@@ -31,6 +31,7 @@ object AlarmScheduler {
             putExtra("EXTRA_NOTIFICATION_ID", (reminderId % Int.MAX_VALUE).toInt())
             putExtra("EXTRA_NOTIFICATION_TITLE", "Reminder: $title")
             putExtra("EXTRA_NOTIFICATION_MESSAGE", "Scheduled for $dueText")
+            putExtra("EXTRA_REMINDER_ID", reminderId)
         }
 
         scheduleAlarm(context, (reminderId % Int.MAX_VALUE).toInt(), triggerTimeMs, intent)
@@ -144,7 +145,11 @@ object AlarmScheduler {
     }
 
     fun parseDateTimeToEpoch(text: String): Long? {
-        val clean = text.trim()
+        val clean = text
+            .replace('\u202F', ' ')
+            .replace('\u00A0', ' ')
+            .replace(Regex("\\s+"), " ")
+            .trim()
         if (clean.isBlank()) return null
 
         val formats = listOf(
@@ -154,6 +159,8 @@ object AlarmScheduler {
             "dd-MM-yyyy hh:mm a",
             "yyyy-MM-dd, hh:mm a",
             "yyyy-MM-dd hh:mm a",
+            "dd/MM/yyyy, HH:mm",
+            "dd/MM/yyyy HH:mm",
             "dd/MM/yyyy",
             "dd-MM-yyyy",
             "yyyy-MM-dd",
@@ -162,18 +169,21 @@ object AlarmScheduler {
             "MMM d, hh:mm a"
         )
 
+        val locales = listOf(Locale.US, Locale.getDefault()).distinct()
         for (pattern in formats) {
-            try {
-                val sdf = SimpleDateFormat(pattern, Locale.US).apply { isLenient = true }
-                val parsed = sdf.parse(clean)
-                if (parsed != null) {
-                    val cal = Calendar.getInstance().apply { time = parsed }
-                    if (cal.get(Calendar.YEAR) < 2000) {
-                        cal.set(Calendar.YEAR, Calendar.getInstance().get(Calendar.YEAR))
+            for (loc in locales) {
+                try {
+                    val sdf = SimpleDateFormat(pattern, loc).apply { isLenient = true }
+                    val parsed = sdf.parse(clean)
+                    if (parsed != null) {
+                        val cal = Calendar.getInstance().apply { time = parsed }
+                        if (cal.get(Calendar.YEAR) < 2000) {
+                            cal.set(Calendar.YEAR, Calendar.getInstance().get(Calendar.YEAR))
+                        }
+                        return cal.timeInMillis
                     }
-                    return cal.timeInMillis
-                }
-            } catch (_: Exception) {}
+                } catch (_: Exception) {}
+            }
         }
 
         // Handle "Tomorrow, 10:00 AM" or "Today, 5:00 PM"

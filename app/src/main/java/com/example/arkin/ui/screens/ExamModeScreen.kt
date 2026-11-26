@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Notifications
@@ -72,8 +73,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -85,10 +88,12 @@ import com.example.arkin.model.AiExamPrepState
 import com.example.arkin.model.AppScreen
 import com.example.arkin.model.DocUploadType
 import com.example.arkin.model.RevisionPlanItem
+import com.example.arkin.model.RevisionQuizState
 import com.example.arkin.ui.components.AppHeader
 import com.example.arkin.ui.components.ConfirmationDialog
 import com.example.arkin.ui.components.MarkdownText
 import com.example.arkin.util.AlarmScheduler
+import com.example.arkin.util.ExamSubjectValidator
 import com.example.arkin.viewmodel.ArkinViewModel
 import com.example.ui.theme.AccentBlueBg
 import com.example.ui.theme.AccentBlueText
@@ -114,9 +119,12 @@ enum class ExamModeTab {
 fun ExamModeScreen(viewModel: ArkinViewModel) {
     val exams by viewModel.allExams.collectAsState()
     val prepState by viewModel.aiExamPrepState.collectAsState()
+    val revisionQuizState by viewModel.revisionQuizState.collectAsState()
     val completedRevisionIds by viewModel.completedRevisionTaskIds.collectAsState()
     val studyHours by viewModel.selectedStudyHoursPerDay.collectAsState()
     val customSyllabusMap by viewModel.examCustomSyllabus.collectAsState()
+    val prepDescriptionMap by viewModel.examPrepDescription.collectAsState()
+    val prepDetailLevel by viewModel.examPrepDetailLevel.collectAsState()
 
     var currentTab by remember { mutableStateOf(ExamModeTab.SCHEDULE) }
     var isCalendarView by remember { mutableStateOf(false) }
@@ -126,6 +134,7 @@ fun ExamModeScreen(viewModel: ArkinViewModel) {
     var examBeingEdited by remember { mutableStateOf<TimetableEntity?>(null) }
     var examToDelete by remember { mutableStateOf<TimetableEntity?>(null) }
     var selectedExamForPrep by remember { mutableStateOf<TimetableEntity?>(null) }
+    var revisionTaskToConfirm by remember { mutableStateOf<Triple<String, TimetableEntity, String>?>(null) }
 
     // If an exam is selected for prep or planner, maintain reference
     val activeExam = selectedExamForPrep ?: exams.firstOrNull()
@@ -258,7 +267,13 @@ fun ExamModeScreen(viewModel: ArkinViewModel) {
                         customSyllabus = activeExam?.let { customSyllabusMap[it.id] }.orEmpty(),
                         onSelectExam = { selectedExamForPrep = it },
                         onStudyHoursChanged = { viewModel.setStudyHours(it) },
-                        onToggleTask = { viewModel.toggleRevisionTask(it) },
+                        onToggleTask = { taskId, exam, topic, isCurrentlyDone ->
+                            if (isCurrentlyDone) {
+                                viewModel.uncheckRevisionTask(taskId, topic)
+                            } else {
+                                revisionTaskToConfirm = Triple(taskId, exam, topic)
+                            }
+                        },
                         onSyllabusChanged = { syllabus ->
                             activeExam?.let { viewModel.setExamSyllabus(it.id, syllabus) }
                         },
@@ -274,9 +289,15 @@ fun ExamModeScreen(viewModel: ArkinViewModel) {
                         exams = exams,
                         selectedExam = activeExam,
                         prepState = prepState,
+                        detailLevel = prepDetailLevel,
+                        prepDescription = activeExam?.let { prepDescriptionMap[it.id] }.orEmpty(),
                         onSelectExam = { selectedExamForPrep = it },
-                        onGeneratePrep = { exam, mode ->
-                            viewModel.generateExamPreparation(exam, mode)
+                        onDetailLevelChanged = { viewModel.setExamPrepDetailLevel(it) },
+                        onDescriptionChanged = { desc ->
+                            activeExam?.let { viewModel.setExamPrepDescription(it.id, desc) }
+                        },
+                        onGeneratePrep = { exam, mode, detail, desc ->
+                            viewModel.generateExamPreparation(exam, mode, detail, desc)
                         },
                         onResetPrep = { viewModel.resetAiExamPrepState() }
                     )
@@ -335,6 +356,43 @@ fun ExamModeScreen(viewModel: ArkinViewModel) {
                 examToDelete = null
             },
             onDismiss = { examToDelete = null }
+        )
+    }
+
+    // Confirm Revision Task Completion before Verification Quiz
+    revisionTaskToConfirm?.let { (taskId, exam, topic) ->
+        ConfirmationDialog(
+            title = "Completed This Topic?",
+            message = "Are you sure you finished revising '$topic' for ${exam.subject}? Answer 1 quick question to verify and mark it done!",
+            confirmButtonText = "Yes, Verify Now",
+            dismissButtonText = "Not Yet",
+            isDestructive = false,
+            icon = Icons.Rounded.CheckCircle,
+            onConfirm = {
+                revisionTaskToConfirm = null
+                viewModel.startRevisionVerificationQuiz(taskId, exam, topic)
+            },
+            onDismiss = { revisionTaskToConfirm = null }
+        )
+    }
+
+    // Revision Verification Quiz Dialog
+    if (revisionQuizState !is RevisionQuizState.Idle) {
+        RevisionQuizVerificationDialog(
+            state = revisionQuizState,
+            onRetry = { taskId, subject, topic ->
+                val targetExam = exams.firstOrNull { it.subject == subject } ?: activeExam
+                if (targetExam != null) {
+                    viewModel.startRevisionVerificationQuiz(taskId, targetExam, topic)
+                }
+            },
+            onWrongAnswer = {
+                viewModel.showToast("Wrong answer! Try again to complete this revision.")
+            },
+            onVerifiedComplete = { taskId, topic ->
+                viewModel.markRevisionTaskCompleted(taskId, topic)
+            },
+            onDismiss = { viewModel.dismissRevisionQuiz() }
         )
     }
 }
@@ -895,7 +953,7 @@ private fun RevisionPlannerTab(
     customSyllabus: String,
     onSelectExam: (TimetableEntity) -> Unit,
     onStudyHoursChanged: (Int) -> Unit,
-    onToggleTask: (String) -> Unit,
+    onToggleTask: (taskId: String, exam: TimetableEntity, topic: String, isCurrentlyDone: Boolean) -> Unit,
     onSyllabusChanged: (String) -> Unit,
     onNavigateToAiPrep: () -> Unit
 ) {
@@ -916,6 +974,7 @@ private fun RevisionPlannerTab(
 
     val exam = selectedExam ?: exams.first()
     val scrollState = rememberScrollState()
+    var newTopicInput by remember { mutableStateOf("") }
 
     // Compute remaining days
     val daysUntilExam = remember(exam) {
@@ -929,17 +988,30 @@ private fun RevisionPlannerTab(
     val totalHoursAvailable = daysUntilExam * studyHours
 
     // Parse syllabus topics or generate standard template
+    val defaultTopics = remember {
+        listOf(
+            "Core Theory & Fundamentals",
+            "Key Formulas & Definitions",
+            "High-Weightage Problem Solving",
+            "Previous Year Questions & Derivations",
+            "Final Mock Test & Rapid Recall"
+        )
+    }
     val topics = remember(customSyllabus, exam) {
         if (customSyllabus.isNotBlank()) {
             customSyllabus.split("\n", ",").map { it.trim().removePrefix("-").removePrefix("*").trim() }.filter { it.isNotBlank() }
         } else {
-            listOf(
-                "Core Theory & Fundamentals",
-                "Key Formulas & Definitions",
-                "High-Weightage Problem Solving",
-                "Previous Year Questions & Derivations",
-                "Final Mock Test & Rapid Recall"
-            )
+            defaultTopics
+        }
+    }
+    val perTopicTargetLabel = remember(totalHoursAvailable, topics.size) {
+        val totalMins = ((totalHoursAvailable * 60) / topics.size.coerceAtLeast(1)).coerceAtLeast(15)
+        val hrs = totalMins / 60
+        val mins = totalMins % 60
+        when {
+            hrs > 0 && mins > 0 -> "${hrs}h ${mins}m"
+            hrs > 0 -> "${hrs}h"
+            else -> "${mins}m"
         }
     }
 
@@ -988,7 +1060,7 @@ private fun RevisionPlannerTab(
                 )
 
                 Text(
-                    text = "Date: ${exam.examDate} • $daysUntilExam day(s) remaining",
+                    text = "Date: ${exam.examDate} • $daysUntilExam day(s) left • Total: ${totalHoursAvailable}h",
                     fontSize = 12.sp,
                     color = Color(0xFFDC2626),
                     fontWeight = FontWeight.Bold,
@@ -1054,13 +1126,14 @@ private fun RevisionPlannerTab(
                     )
                 }
 
+                Spacer(modifier = Modifier.height(6.dp))
+
                 LinearProgressIndicator(
                     progress = { progress },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(8.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .padding(top = 4.dp),
+                        .clip(RoundedCornerShape(4.dp)),
                     color = ArkinPrimary,
                     trackColor = ArkinPrimary.copy(alpha = 0.2f)
                 )
@@ -1083,6 +1156,46 @@ private fun RevisionPlannerTab(
             modifier = Modifier.padding(bottom = 12.dp)
         )
 
+        // Quick Add Topic Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = newTopicInput,
+                onValueChange = { newTopicInput = it },
+                placeholder = { Text("Add a chapter or topic to revise...") },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
+                modifier = Modifier.weight(1f)
+            )
+            Surface(
+                onClick = {
+                    val trimmed = newTopicInput.trim()
+                    if (trimmed.isNotBlank()) {
+                        val updated = if (customSyllabus.isBlank()) {
+                            (defaultTopics + trimmed).joinToString("\n")
+                        } else {
+                            "$customSyllabus\n$trimmed"
+                        }
+                        onSyllabusChanged(updated)
+                        newTopicInput = ""
+                    }
+                },
+                shape = RoundedCornerShape(14.dp),
+                color = ArkinPrimary,
+                modifier = Modifier.size(50.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Topic", tint = Color.White)
+                }
+            }
+        }
+
         topics.forEachIndexed { index, topic ->
             val taskId = "${exam.id}_$index"
             val isDone = completedTaskIds.contains(taskId)
@@ -1097,6 +1210,7 @@ private fun RevisionPlannerTab(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 4.dp)
+                    .clickable { onToggleTask(taskId, exam, topic, isDone) }
             ) {
                 Row(
                     modifier = Modifier
@@ -1106,7 +1220,7 @@ private fun RevisionPlannerTab(
                 ) {
                     Checkbox(
                         checked = isDone,
-                        onCheckedChange = { onToggleTask(taskId) },
+                        onCheckedChange = { onToggleTask(taskId, exam, topic, isDone) },
                         colors = CheckboxDefaults.colors(checkedColor = Color(0xFF16A34A))
                     )
 
@@ -1122,7 +1236,7 @@ private fun RevisionPlannerTab(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "• Target: ${studyHours / (topics.size.coerceAtLeast(1))} hrs",
+                                text = "• Target: $perTopicTargetLabel",
                                 fontSize = 10.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1141,17 +1255,32 @@ private fun RevisionPlannerTab(
         Spacer(modifier = Modifier.height(18.dp))
 
         // Custom Syllabus Input
-        Text(
-            text = "Syllabus & High-Yield Topics",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Syllabus & High-Yield Topics",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            if (customSyllabus.isNotBlank()) {
+                Text(
+                    text = "Reset Default",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ArkinPrimary,
+                    modifier = Modifier.clickable { onSyllabusChanged("") }
+                )
+            }
+        }
 
         OutlinedTextField(
             value = customSyllabus,
             onValueChange = onSyllabusChanged,
-            placeholder = { Text("Paste or type exam syllabus topics (one per line) to personalize your revision plan...") },
+            placeholder = { Text("Paste or type exam syllabus topics (one per line or comma-separated)...") },
             minLines = 3,
             maxLines = 6,
             shape = RoundedCornerShape(16.dp),
@@ -1168,12 +1297,13 @@ private fun RevisionPlannerTab(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp)
-                .padding(bottom = 20.dp)
         ) {
             Icon(Icons.Rounded.Psychology, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(8.dp))
             Text("Generate AI Practice Material 🪄", fontWeight = FontWeight.Bold)
         }
+
+        Spacer(modifier = Modifier.height(90.dp))
     }
 }
 
@@ -1183,8 +1313,12 @@ private fun AiExamPrepTab(
     exams: List<TimetableEntity>,
     selectedExam: TimetableEntity?,
     prepState: AiExamPrepState,
+    detailLevel: String,
+    prepDescription: String,
     onSelectExam: (TimetableEntity) -> Unit,
-    onGeneratePrep: (TimetableEntity, String) -> Unit,
+    onDetailLevelChanged: (String) -> Unit,
+    onDescriptionChanged: (String) -> Unit,
+    onGeneratePrep: (TimetableEntity, String, String, String) -> Unit,
     onResetPrep: () -> Unit
 ) {
     if (exams.isEmpty()) {
@@ -1205,6 +1339,14 @@ private fun AiExamPrepTab(
     val exam = selectedExam ?: exams.first()
     var selectedMode by remember { mutableStateOf("SUMMARY") }
     val scrollState = rememberScrollState()
+    val clipboardManager = LocalClipboardManager.current
+
+    val modeButtonLabel = when (selectedMode) {
+        "SUMMARY" -> "Generate AI Summary 🪄"
+        "TOPICS" -> "Generate Topic Checklist 🪄"
+        "QUESTIONS" -> "Generate Practice Questions 🪄"
+        else -> "Generate Mock Test 🪄"
+    }
 
     Column(
         modifier = Modifier
@@ -1294,11 +1436,136 @@ private fun AiExamPrepTab(
             )
         }
 
+        // Answer Length / Detail Level Selector
+        Text(
+            text = "Answer Detail Level",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp, bottom = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(
+                "Short" to "Short Points",
+                "Medium" to "Medium",
+                "Detailed" to "Detailed"
+            ).forEach { (levelKey, label) ->
+                val isSelected = detailLevel == levelKey
+                Surface(
+                    onClick = { onDetailLevelChanged(levelKey) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isSelected) ArkinPrimary else MaterialTheme.colorScheme.surface,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (isSelected) ArkinPrimary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(38.dp)
+                        .testTag("ai_prep_detail_$levelKey")
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = label,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+
+        // Custom Answer Description & Focus Points
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Answer Description & Focus Points",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            if (prepDescription.isNotBlank()) {
+                Text(
+                    text = "Clear",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ArkinPrimary,
+                    modifier = Modifier.clickable { onDescriptionChanged("") }
+                )
+            }
+        }
+
+        OutlinedTextField(
+            value = prepDescription,
+            onValueChange = onDescriptionChanged,
+            placeholder = {
+                Text(
+                    "Describe how detailed or short the answer should be, or specific points/chapters (e.g., 'Short 3-4 bullet points on Normalization' or 'Detailed 10-mark answers with examples')",
+                    fontSize = 12.sp
+                )
+            },
+            minLines = 2,
+            maxLines = 4,
+            shape = RoundedCornerShape(16.dp),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp, bottom = 8.dp)
+                .testTag("ai_prep_description_field")
+        )
+
+        // 1-Tap Quick Focus Preset Chips
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(bottom = 12.dp)
+        ) {
+            val presets = listOf(
+                "Short bullet points only",
+                "2-3 marks short answers",
+                "5-10 marks detailed answers",
+                "Include real examples",
+                "Formulas & definitions only"
+            )
+            items(presets) { preset ->
+                Surface(
+                    onClick = {
+                        val updated = if (prepDescription.isBlank()) {
+                            preset
+                        } else if (!prepDescription.contains(preset, ignoreCase = true)) {
+                            "${prepDescription.trim().trimEnd('.')}. $preset"
+                        } else {
+                            prepDescription
+                        }
+                        onDescriptionChanged(updated)
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Text(
+                        text = "+ $preset",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
+        }
+
         // Generate Action Button
         val isLoading = prepState is AiExamPrepState.Loading
 
         Button(
-            onClick = { onGeneratePrep(exam, selectedMode) },
+            onClick = { onGeneratePrep(exam, selectedMode, detailLevel, prepDescription) },
             enabled = !isLoading,
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = ArkinPrimary),
@@ -1318,7 +1585,7 @@ private fun AiExamPrepTab(
             } else {
                 Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Generate AI $selectedMode 🪄", fontWeight = FontWeight.Bold)
+                Text(modeButtonLabel, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -1411,7 +1678,7 @@ private fun AiExamPrepTab(
                             modifier = Modifier.padding(top = 6.dp, bottom = 12.dp)
                         )
                         Button(
-                            onClick = { onGeneratePrep(exam, selectedMode) },
+                            onClick = { onGeneratePrep(exam, selectedMode, detailLevel, prepDescription) },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
                             shape = RoundedCornerShape(12.dp)
                         ) {
@@ -1451,21 +1718,34 @@ private fun AiExamPrepTab(
                                 )
                             }
 
-                            Button(
-                                onClick = {
-                                    viewModel.saveNote(
-                                        title = "AI Prep: ${exam.subject} (${prepState.mode})",
-                                        content = prepState.content,
-                                        tag = "Exam",
-                                        colorKey = "purple",
-                                        isSecure = false
-                                    )
-                                },
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = ArkinPrimary),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Text("Save to Notes 💾", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        clipboardManager.setText(AnnotatedString(prepState.content))
+                                        viewModel.showToast("Copied to clipboard")
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(14.dp))
+                                }
+                                Button(
+                                    onClick = {
+                                        viewModel.saveNote(
+                                            title = "AI Prep: ${exam.subject} (${prepState.mode})",
+                                            content = prepState.content,
+                                            tag = "Exam",
+                                            colorKey = "purple",
+                                            isSecure = false
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = ArkinPrimary),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Text("Save to Notes 💾", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
 
@@ -1480,6 +1760,8 @@ private fun AiExamPrepTab(
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(90.dp))
     }
 }
 
@@ -1547,10 +1829,12 @@ private fun ExamEditorDialog(
 ) {
     val context = LocalContext.current
     var subject by remember { mutableStateOf(initialExam?.subject.orEmpty()) }
+    var subjectError by remember { mutableStateOf<String?>(null) }
     var courseCode by remember { mutableStateOf(initialExam?.courseCode.orEmpty()) }
     var examDate by remember { mutableStateOf(initialExam?.examDate.orEmpty().ifBlank {
         SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Calendar.getInstance().time)
     }) }
+    var dateError by remember { mutableStateOf<String?>(null) }
     var timeSlot by remember { mutableStateOf(initialExam?.timeSlot.orEmpty().ifBlank { "10:30 AM - 12:30 PM" }) }
     var room by remember { mutableStateOf(initialExam?.room.orEmpty()) }
 
@@ -1641,9 +1925,16 @@ private fun ExamEditorDialog(
 
                 OutlinedTextField(
                     value = subject,
-                    onValueChange = { subject = it },
+                    onValueChange = {
+                        subject = it
+                        subjectError = null
+                    },
                     label = { Text("Exam Subject *") },
-                    placeholder = { Text("e.g. Operating Systems") },
+                    placeholder = { Text("e.g. Science, Python, SST, HTML") },
+                    isError = subjectError != null,
+                    supportingText = subjectError?.let { err ->
+                        { Text(err, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                    },
                     singleLine = true,
                     shape = RoundedCornerShape(16.dp),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
@@ -1664,8 +1955,15 @@ private fun ExamEditorDialog(
                 // Exam Date with DatePicker
                 OutlinedTextField(
                     value = examDate,
-                    onValueChange = { examDate = it },
+                    onValueChange = {
+                        examDate = it
+                        dateError = null
+                    },
                     label = { Text("Exam Date (DD/MM/YYYY) *") },
+                    isError = dateError != null,
+                    supportingText = dateError?.let { err ->
+                        { Text(err, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                    },
                     singleLine = true,
                     shape = RoundedCornerShape(16.dp),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArkinPrimary),
@@ -1718,15 +2016,290 @@ private fun ExamEditorDialog(
                 ) {
                     Button(
                         onClick = {
-                            if (subject.isNotBlank() && examDate.isNotBlank()) {
-                                onSave(subject, courseCode, examDate, timeSlot, room)
+                            val validation = ExamSubjectValidator.validateSubject(subject)
+                            if (!validation.isValid) {
+                                subjectError = validation.errorMessage
+                                return@Button
                             }
+                            if (examDate.isBlank()) {
+                                dateError = "Please select an exam date."
+                                return@Button
+                            }
+                            onSave(subject.trim(), courseCode.trim(), examDate.trim(), timeSlot.trim(), room.trim())
                         },
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = ArkinPrimary)
                     ) {
                         Text("Save Exam Schedule", fontWeight = FontWeight.Bold)
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RevisionQuizVerificationDialog(
+    state: RevisionQuizState,
+    onRetry: (taskId: String, subject: String, topic: String) -> Unit,
+    onWrongAnswer: () -> Unit,
+    onVerifiedComplete: (taskId: String, topic: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(26.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(22.dp)
+            ) {
+                val (subjectTitle, topicTitle) = when (state) {
+                    is RevisionQuizState.Loading -> state.subject to state.topic
+                    is RevisionQuizState.Ready -> state.subject to state.topic
+                    is RevisionQuizState.Error -> state.subject to state.topic
+                    RevisionQuizState.Idle -> "" to ""
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = ArkinPrimary.copy(alpha = 0.14f)
+                    ) {
+                        Text(
+                            text = "🧠 REVISION CHECK • $subjectTitle",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = ArkinPrimary,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+
+                Text(
+                    text = "Topic: $topicTitle",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp, bottom = 14.dp)
+                )
+
+                when (state) {
+                    is RevisionQuizState.Loading -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            CircularProgressIndicator(color = ArkinPrimary, modifier = Modifier.size(38.dp))
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Text(
+                                text = "Creating verification question...",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Checking your grasp on '$topicTitle'",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+
+                    is RevisionQuizState.Error -> {
+                        Text(
+                            text = state.message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFFDC2626),
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onDismiss,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Cancel")
+                            }
+                            Button(
+                                onClick = { onRetry(state.taskId, state.subject, state.topic) },
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = ArkinPrimary),
+                                modifier = Modifier.weight(1.3f)
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Retry Question", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    is RevisionQuizState.Ready -> {
+                        var selectedIndex by remember(state.quiz.question) { mutableStateOf<Int?>(null) }
+                        var isVerifiedCorrect by remember(state.quiz.question) { mutableStateOf(false) }
+                        var showWrongFeedback by remember(state.quiz.question) { mutableStateOf(false) }
+
+                        Text(
+                            text = state.quiz.question,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(bottom = 14.dp)
+                        )
+
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            state.quiz.options.forEachIndexed { idx, optionText ->
+                                val isSelected = selectedIndex == idx
+                                val borderColor = when {
+                                    isVerifiedCorrect && idx == state.quiz.correctIndex -> Color(0xFF16A34A)
+                                    showWrongFeedback && isSelected -> Color(0xFFDC2626)
+                                    isSelected -> ArkinPrimary
+                                    else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                                }
+                                val bgColor = when {
+                                    isVerifiedCorrect && idx == state.quiz.correctIndex -> Color(0xFF16A34A).copy(alpha = 0.14f)
+                                    showWrongFeedback && isSelected -> Color(0xFFDC2626).copy(alpha = 0.12f)
+                                    isSelected -> ArkinPrimary.copy(alpha = 0.12f)
+                                    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                }
+                                val prefix = listOf("A", "B", "C", "D").getOrElse(idx) { "${idx + 1}" }
+
+                                Surface(
+                                    onClick = {
+                                        if (!isVerifiedCorrect) {
+                                            selectedIndex = idx
+                                            showWrongFeedback = false
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = bgColor,
+                                    border = androidx.compose.foundation.BorderStroke(1.5.dp, borderColor),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "$prefix.",
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 13.sp,
+                                            color = borderColor,
+                                            modifier = Modifier.padding(end = 8.dp)
+                                        )
+                                        Text(
+                                            text = optionText,
+                                            fontSize = 13.sp,
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (showWrongFeedback) {
+                            Text(
+                                text = "❌ Not quite right! Pick another option or try a new question.",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFDC2626),
+                                modifier = Modifier.padding(top = 10.dp)
+                            )
+                        }
+
+                        if (isVerifiedCorrect) {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = Color(0xFF16A34A).copy(alpha = 0.14f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 12.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = "✅ Correct! Revision Verified!",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = Color(0xFF16A34A)
+                                    )
+                                    if (state.quiz.explanation.isNotBlank()) {
+                                        Text(
+                                            text = state.quiz.explanation,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.padding(top = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            if (isVerifiedCorrect) {
+                                Button(
+                                    onClick = onDismiss,
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                                    modifier = Modifier.fillMaxWidth().height(46.dp)
+                                ) {
+                                    Text("Done ✅", fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { onRetry(state.taskId, state.subject, state.topic) },
+                                    shape = RoundedCornerShape(14.dp),
+                                    modifier = Modifier.weight(1f).height(46.dp)
+                                ) {
+                                    Text("New Q", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                                Button(
+                                    onClick = {
+                                        val chosen = selectedIndex ?: return@Button
+                                        if (chosen == state.quiz.correctIndex) {
+                                            isVerifiedCorrect = true
+                                            showWrongFeedback = false
+                                            onVerifiedComplete(state.taskId, state.topic)
+                                        } else {
+                                            showWrongFeedback = true
+                                            onWrongAnswer()
+                                        }
+                                    },
+                                    enabled = selectedIndex != null,
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = ArkinPrimary),
+                                    modifier = Modifier.weight(1.5f).height(46.dp)
+                                ) {
+                                    Text("Submit Answer", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+
+                    RevisionQuizState.Idle -> Unit
                 }
             }
         }

@@ -29,7 +29,9 @@ import com.example.arkin.model.DocProcessingState
 import com.example.arkin.model.DocUploadType
 import com.example.arkin.model.ParsedTimetableClass
 import com.example.arkin.util.AlarmScheduler
+import com.example.arkin.util.NotificationHelper
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 import java.text.SimpleDateFormat
 import com.example.arkin.util.DocumentTextExtractor
@@ -37,16 +39,21 @@ import com.example.arkin.util.ExtractionResult
 import com.example.arkin.util.StudentProfileValidator
 import com.google.firebase.auth.FirebaseUser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import com.example.arkin.model.AiExamPrepState
 import com.example.arkin.model.RevisionPlanItem
+import com.example.arkin.model.RevisionQuizQuestion
+import com.example.arkin.model.RevisionQuizState
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -149,15 +156,24 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val aiExamPrepState = MutableStateFlow<AiExamPrepState>(AiExamPrepState.Idle)
+    val revisionQuizState = MutableStateFlow<RevisionQuizState>(RevisionQuizState.Idle)
     val completedRevisionTaskIds = MutableStateFlow<Set<String>>(emptySet())
     val selectedStudyHoursPerDay = MutableStateFlow(3)
     val examCustomSyllabus = MutableStateFlow<Map<Long, String>>(emptyMap())
+    val examPrepDescription = MutableStateFlow<Map<Long, String>>(emptyMap())
+    val examPrepDetailLevel = MutableStateFlow("Medium") // Short, Medium, Detailed
+    private val examPrefs by lazy {
+        getApplication<Application>().getSharedPreferences("arkin_exam_prefs", Context.MODE_PRIVATE)
+    }
 
     // Reminders
     val allReminders: StateFlow<List<ReminderEntity>> = reminderDao.getAllReminders()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val activeReminderAlert = MutableStateFlow<ReminderEntity?>(null)
+    private val notifiedOnOpenIds = mutableSetOf<Long>()
+    private val dismissedAlertIds = mutableSetOf<Long>()
+    private var scheduledReminderPopupJob: Job? = null
 
     // Exam Results for Study Analyser
     val allExamResults: StateFlow<List<ExamResultEntity>> = examResultDao.getAllExamResults()
@@ -232,6 +248,7 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
     val lastFirestoreSyncTime = MutableStateFlow<Long?>(null)
 
     init {
+        loadPersistedExamPrefs()
         viewModelScope.launch {
             val prof = profileDao.getProfileSync()
             if (prof == null) {
@@ -257,15 +274,80 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             allReminders.collect { list ->
-                val now = System.currentTimeMillis()
-                val due = list.firstOrNull { rem ->
-                    if (rem.isCompleted) return@firstOrNull false
-                    val epoch = AlarmScheduler.parseDateTimeToEpoch(rem.dueText)
-                    epoch != null && epoch <= now && (now - epoch) < 24 * 60 * 60 * 1000L
+                processDueRemindersOnAppOpen(list)
+            }
+        }
+    }
+
+    private fun findDueReminders(list: List<ReminderEntity>): List<ReminderEntity> {
+        val now = System.currentTimeMillis()
+        val windowMs = 24 * 60 * 60 * 1000L
+        val active = list.filter { !it.isCompleted }
+        if (active.isEmpty()) return emptyList()
+
+        val withEpoch = active.map { rem -> rem to AlarmScheduler.parseDateTimeToEpoch(rem.dueText) }
+        val dueOrOverdue = withEpoch
+            .filter { (_, epoch) -> epoch != null && epoch <= now }
+            .sortedByDescending { (_, epoch) -> epoch ?: 0L }
+            .map { it.first }
+        if (dueOrOverdue.isNotEmpty()) return dueOrOverdue
+
+        val upcomingWithin24h = withEpoch
+            .filter { (_, epoch) -> epoch != null && epoch > now && (epoch - now) <= windowMs }
+            .sortedBy { (_, epoch) -> epoch ?: Long.MAX_VALUE }
+            .map { it.first }
+        if (upcomingWithin24h.isNotEmpty()) return upcomingWithin24h
+
+        return active
+    }
+
+    private fun processDueRemindersOnAppOpen(list: List<ReminderEntity>) {
+        val dueList = findDueReminders(list)
+        if (dueList.isEmpty()) return
+
+        val appContext = getApplication<Application>()
+        NotificationHelper.createNotificationChannels(appContext)
+        val canNotify = NotificationHelper.canPostNotifications(appContext)
+
+        if (canNotify) {
+            dueList.forEach { rem ->
+                if (notifiedOnOpenIds.add(rem.id)) {
+                    NotificationHelper.showReminderNotification(
+                        context = appContext,
+                        notificationId = (rem.id % Int.MAX_VALUE).toInt(),
+                        title = "Reminder: ${rem.title}",
+                        message = "Due: ${rem.dueText}",
+                        reminderId = rem.id
+                    )
                 }
-                if (due != null && activeReminderAlert.value == null) {
-                    activeReminderAlert.value = due
+            }
+        }
+
+        val firstDue = dueList.firstOrNull { it.id !in dismissedAlertIds } ?: return
+        if (activeReminderAlert.value == null && scheduledReminderPopupJob?.isActive != true) {
+            scheduledReminderPopupJob = viewModelScope.launch {
+                // Wait until user reaches the Home page (Dashboard) and let system notification appear first
+                currentScreen.first { it == AppScreen.DASHBOARD }
+                delay(500L)
+                val latest = allReminders.value.firstOrNull { it.id == firstDue.id && !it.isCompleted }
+                if (latest != null && latest.id !in dismissedAlertIds && activeReminderAlert.value == null) {
+                    activeReminderAlert.value = latest
                 }
+            }
+        }
+    }
+
+    fun notifyDueRemindersOnAppOpen() {
+        processDueRemindersOnAppOpen(allReminders.value)
+    }
+
+    fun openReminderById(reminderId: Long) {
+        if (reminderId < 0L) return
+        viewModelScope.launch {
+            currentScreen.first { it !in listOf(AppScreen.SPLASH, AppScreen.AUTH) }
+            val match = allReminders.value.firstOrNull { it.id == reminderId && !it.isCompleted }
+            if (match != null) {
+                activeReminderAlert.value = match
             }
         }
     }
@@ -465,13 +547,21 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleTask(task: TaskEntity) {
         viewModelScope.launch {
-            val updated = task.copy(isCompleted = !task.isCompleted)
+            val nowCompleted = !task.isCompleted
+            val completedAt = if (nowCompleted) System.currentTimeMillis() else null
+            val updated = task.copy(
+                isCompleted = nowCompleted,
+                completedAt = completedAt
+            )
             taskDao.updateTask(updated)
             if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
                 FirestoreManager.saveTask(updated)
             }
-            if (updated.isCompleted) {
-                showToast("Task completed! 🎉")
+            if (updated.isCompleted && completedAt != null) {
+                val timeText = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(completedAt))
+                showToast("Task completed at $timeText! 🎉")
+            } else {
+                showToast("Task marked as pending")
             }
         }
     }
@@ -626,7 +716,7 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                     com.example.arkin.util.AlarmScheduler.cancelNotification(getApplication(), hw.id + 100000)
                 } catch (_: Exception) {}
             }
-            showToast("Status updated to $newStatus")
+            showToast(if (updated.isDone) "Homework confirmed as $newStatus! ✅" else "Status updated to $newStatus")
         }
     }
 
@@ -713,7 +803,7 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                     com.example.arkin.util.AlarmScheduler.cancelNotification(getApplication(), hw.id + 100000)
                 } catch (_: Exception) {}
             }
-            showToast(if (updated.isDone) "Marked as done!" else "Marked as pending")
+            showToast(if (updated.isDone) "Homework marked as done! ✅" else "Marked as pending")
         }
     }
 
@@ -794,7 +884,12 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
         room: String = "",
         colorKey: String = "purple"
     ) {
-        if (subject.isBlank() || examDate.isBlank() || timeSlot.isBlank()) return
+        val subjectValidation = com.example.arkin.util.ExamSubjectValidator.validateSubject(subject)
+        if (!subjectValidation.isValid) {
+            showToast(subjectValidation.errorMessage ?: "Please enter a valid exam subject.")
+            return
+        }
+        if (examDate.isBlank() || timeSlot.isBlank()) return
         viewModelScope.launch {
             val dayOfWeek = deriveDayOfWeek(examDate)
             val entry = TimetableEntity(
@@ -825,6 +920,11 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateExam(entry: TimetableEntity) {
+        val subjectValidation = com.example.arkin.util.ExamSubjectValidator.validateSubject(entry.subject)
+        if (!subjectValidation.isValid) {
+            showToast(subjectValidation.errorMessage ?: "Please enter a valid exam subject.")
+            return
+        }
         viewModelScope.launch {
             timetableDao.updateClass(entry)
             if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
@@ -847,28 +947,178 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
         deleteClass(entry)
     }
 
+    private fun loadPersistedExamPrefs() {
+        try {
+            completedRevisionTaskIds.value = examPrefs.getStringSet("completed_tasks", emptySet())?.toSet() ?: emptySet()
+            selectedStudyHoursPerDay.value = examPrefs.getInt("study_hours", 3).coerceIn(1, 10)
+            examPrepDetailLevel.value = examPrefs.getString("prep_detail_level", "Medium") ?: "Medium"
+
+            val syllabusJson = examPrefs.getString("custom_syllabus_json", null)
+            if (!syllabusJson.isNullOrBlank()) {
+                val obj = JSONObject(syllabusJson)
+                val map = mutableMapOf<Long, String>()
+                obj.keys().forEach { key ->
+                    key.toLongOrNull()?.let { id -> map[id] = obj.optString(key, "") }
+                }
+                examCustomSyllabus.value = map
+            }
+
+            val descJson = examPrefs.getString("prep_description_json", null)
+            if (!descJson.isNullOrBlank()) {
+                val obj = JSONObject(descJson)
+                val map = mutableMapOf<Long, String>()
+                obj.keys().forEach { key ->
+                    key.toLongOrNull()?.let { id -> map[id] = obj.optString(key, "") }
+                }
+                examPrepDescription.value = map
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun saveMapToPrefs(prefKey: String, map: Map<Long, String>) {
+        try {
+            val obj = JSONObject()
+            map.forEach { (k, v) -> obj.put(k.toString(), v) }
+            examPrefs.edit().putString(prefKey, obj.toString()).apply()
+        } catch (_: Exception) {}
+    }
+
     fun toggleRevisionTask(taskId: String) {
         val current = completedRevisionTaskIds.value
-        completedRevisionTaskIds.value = if (current.contains(taskId)) {
+        val updated = if (current.contains(taskId)) {
             current - taskId
         } else {
             current + taskId
         }
+        completedRevisionTaskIds.value = updated
+        examPrefs.edit().putStringSet("completed_tasks", updated).apply()
+    }
+
+    fun markRevisionTaskCompleted(taskId: String, topic: String) {
+        val updated = completedRevisionTaskIds.value + taskId
+        completedRevisionTaskIds.value = updated
+        examPrefs.edit().putStringSet("completed_tasks", updated).apply()
+        showToast("Correct! '$topic' marked as done! ✅")
+    }
+
+    fun uncheckRevisionTask(taskId: String, topic: String) {
+        val updated = completedRevisionTaskIds.value - taskId
+        completedRevisionTaskIds.value = updated
+        examPrefs.edit().putStringSet("completed_tasks", updated).apply()
+        showToast("'$topic' marked as pending")
+    }
+
+    fun dismissRevisionQuiz() {
+        revisionQuizState.value = RevisionQuizState.Idle
+    }
+
+    fun startRevisionVerificationQuiz(taskId: String, exam: TimetableEntity, topic: String) {
+        revisionQuizState.value = RevisionQuizState.Loading(taskId, exam.subject, topic)
+        viewModelScope.launch {
+            try {
+                val allNotes = noteDao.getAllNotesSync()
+                val relevantNotes = allNotes.filter { note ->
+                    note.subject.equals(exam.subject, ignoreCase = true) ||
+                        note.title.contains(exam.subject, ignoreCase = true) ||
+                        note.content.contains(topic, ignoreCase = true)
+                }
+                val notesSnippet = relevantNotes.take(2).joinToString("\n---\n") {
+                    "${it.title}: ${it.content.take(500)}"
+                }
+                val customSyllabus = examCustomSyllabus.value[exam.id].orEmpty()
+
+                val prompt = """
+                    Create exactly ONE clear, fair multiple-choice verification question to test whether a student has genuinely revised the following topic:
+                    Subject: ${exam.subject} ${if (exam.courseCode.isNotBlank()) "(${exam.courseCode})" else ""}
+                    Revised Topic: "$topic"
+                    ${if (customSyllabus.isNotBlank()) "Syllabus Context:\n$customSyllabus\n" else ""}
+                    ${if (notesSnippet.isNotBlank()) "Student Notes Context:\n$notesSnippet\n" else ""}
+
+                    Return ONLY valid JSON (no markdown fences, no extra text) in this exact format:
+                    {
+                      "question": "Clear question text about $topic in ${exam.subject}",
+                      "options": ["Option A", "Option B", "Option C", "Option D"],
+                      "correctIndex": 0,
+                      "explanation": "Short 1-sentence explanation of why this option is correct."
+                    }
+                """.trimIndent()
+
+                val systemPrompt = "You are an academic exam verifier. Output ONLY a single valid JSON object with keys: question, options (array of 4 short strings), correctIndex (integer 0-3), explanation."
+                val result = GroqHelper.analyzeDocument(
+                    userPrompt = prompt,
+                    maxTokens = 550,
+                    systemInstructionOverride = systemPrompt
+                )
+
+                result.onSuccess { raw ->
+                    val parsed = GroqHelper.parseRevisionQuizResponse(raw)
+                    if (parsed != null) {
+                        revisionQuizState.value = RevisionQuizState.Ready(
+                            taskId = taskId,
+                            subject = exam.subject,
+                            topic = topic,
+                            quiz = parsed
+                        )
+                    } else {
+                        revisionQuizState.value = RevisionQuizState.Error(
+                            taskId = taskId,
+                            subject = exam.subject,
+                            topic = topic,
+                            message = "Could not parse quiz question from AI response. Please tap Retry."
+                        )
+                    }
+                }.onFailure { err ->
+                    revisionQuizState.value = RevisionQuizState.Error(
+                        taskId = taskId,
+                        subject = exam.subject,
+                        topic = topic,
+                        message = err.message ?: "Unable to load verification question. Please check your internet connection and retry."
+                    )
+                }
+            } catch (e: Exception) {
+                revisionQuizState.value = RevisionQuizState.Error(
+                    taskId = taskId,
+                    subject = exam.subject,
+                    topic = topic,
+                    message = e.message ?: "Error generating verification question."
+                )
+            }
+        }
     }
 
     fun setStudyHours(hours: Int) {
-        selectedStudyHoursPerDay.value = hours.coerceIn(1, 10)
+        val clamped = hours.coerceIn(1, 10)
+        selectedStudyHoursPerDay.value = clamped
+        examPrefs.edit().putInt("study_hours", clamped).apply()
     }
 
     fun setExamSyllabus(examId: Long, syllabus: String) {
-        examCustomSyllabus.value = examCustomSyllabus.value + (examId to syllabus)
+        val updated = examCustomSyllabus.value + (examId to syllabus)
+        examCustomSyllabus.value = updated
+        saveMapToPrefs("custom_syllabus_json", updated)
+    }
+
+    fun setExamPrepDescription(examId: Long, description: String) {
+        val updated = examPrepDescription.value + (examId to description)
+        examPrepDescription.value = updated
+        saveMapToPrefs("prep_description_json", updated)
+    }
+
+    fun setExamPrepDetailLevel(level: String) {
+        examPrepDetailLevel.value = level
+        examPrefs.edit().putString("prep_detail_level", level).apply()
     }
 
     fun resetAiExamPrepState() {
         aiExamPrepState.value = AiExamPrepState.Idle
     }
 
-    fun generateExamPreparation(exam: TimetableEntity, mode: String) {
+    fun generateExamPreparation(
+        exam: TimetableEntity,
+        mode: String,
+        detailLevel: String = examPrepDetailLevel.value,
+        customDescription: String = examPrepDescription.value[exam.id].orEmpty()
+    ) {
         aiExamPrepState.value = AiExamPrepState.Loading(mode)
         viewModelScope.launch {
             try {
@@ -884,37 +1134,54 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                 } else ""
 
                 val customSyllabus = examCustomSyllabus.value[exam.id].orEmpty()
+                val trimmedDesc = customDescription.trim()
+
+                val detailInstruction = when (detailLevel) {
+                    "Short" -> "ANSWER DEPTH: SHORT & CRISP. Keep answers concise, bullet-pointed (2-4 short points per topic), formula-focused, and easy to revise in 2 minutes. Avoid long paragraphs."
+                    "Detailed" -> "ANSWER DEPTH: FULL DETAILED EXAM ANSWERS. Provide thorough, step-by-step explanations, complete derivations/examples, key definitions, and high-scoring points suitable for long-answer exam questions."
+                    else -> "ANSWER DEPTH: MEDIUM / BALANCED. Provide clear, well-structured explanations with concise bullet points, key formulas, and short examples."
+                }
+
+                val customInstructionsBlock = buildString {
+                    if (customSyllabus.isNotBlank()) {
+                        appendLine("Student's Syllabus / Topics:")
+                        appendLine(customSyllabus)
+                        appendLine()
+                    }
+                    if (trimmedDesc.isNotBlank()) {
+                        appendLine("Student's Custom Answer Requirements (MUST FOLLOW STRICTLY):")
+                        appendLine(trimmedDesc)
+                        appendLine()
+                    }
+                    appendLine(detailInstruction)
+                }
 
                 val prompt = when (mode) {
                     "SUMMARY" -> """
-                        You are Arkin AI, an expert exam preparation mentor for college students.
-                        Prepare a high-yield, comprehensive Revision Summary and Core Concepts Guide for the following exam:
+                        Prepare a Revision Summary and Core Concepts Guide for the following exam:
                         Subject: ${exam.subject} ${if (exam.courseCode.isNotBlank()) "(${exam.courseCode})" else ""}
                         Exam Date: ${exam.examDate}
                         Timings: ${exam.timeSlot}
-                        
-                        ${if (customSyllabus.isNotBlank()) "Student's Syllabus Topics:\n$customSyllabus\n" else ""}
-                        ${if (notesContext.isNotBlank()) "Student's Saved Notes:\n$notesContext\n" else "Note: Student has no local notes saved yet. Provide a rigorous, standard university-level curriculum summary for '${exam.subject}'."}
-                        
-                        Please structure your output using clear Markdown headings:
+
+                        $customInstructionsBlock
+                        ${if (notesContext.isNotBlank()) "Student's Saved Notes:\n$notesContext\n" else "Note: Student has no local notes saved yet. Provide a rigorous, standard curriculum summary for '${exam.subject}'."}
+
+                        Structure your output using clear Markdown headings:
                         # 📚 Quick Revision Summary: ${exam.subject}
                         ## 1. High-Yield Core Concepts & Key Formulas
-                        ## 2. Essential Definitions & Theorems
-                        ## 3. Most Frequently Asked University Exam Topics
-                        ## 4. Key Exam Pitfalls & Last-Minute Memory Aids
-                        
-                        *Notice: This study guide is an AI-generated suggestion to assist revision. Verify against your official college syllabus.*
+                        ## 2. Essential Definitions & Key Points
+                        ## 3. Most Frequently Asked Exam Topics
+                        ## 4. Common Mistakes & Memory Aids
                     """.trimIndent()
 
                     "TOPICS" -> """
-                        You are Arkin AI, an academic exam strategist.
                         Generate a prioritized Topic Checklist and Study Weightage Breakdown for the following exam:
                         Subject: ${exam.subject} ${if (exam.courseCode.isNotBlank()) "(${exam.courseCode})" else ""}
                         Exam Date: ${exam.examDate}
-                        
-                        ${if (customSyllabus.isNotBlank()) "Student's Syllabus Topics:\n$customSyllabus\n" else ""}
-                        ${if (notesContext.isNotBlank()) "Student's Saved Notes:\n$notesContext\n" else "Note: Standard university-level syllabus for '${exam.subject}'."}
-                        
+
+                        $customInstructionsBlock
+                        ${if (notesContext.isNotBlank()) "Student's Saved Notes:\n$notesContext\n" else "Note: Standard curriculum syllabus for '${exam.subject}'."}
+
                         Structure your response in Markdown with clear checklist items:
                         # ✅ High-Yield Topic Checklist: ${exam.subject}
                         ## 🔴 Tier 1: Highest Priority (Must Master)
@@ -925,45 +1192,53 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
                         - [ ] Topic 4: Key focus
                         ## 🟢 Tier 3: Quick Review (Formulas / Definitions)
                         - [ ] Topic 5: Rapid review item
-                        
-                        *Notice: AI-generated revision checklist. Always cross-check with your professor's syllabus.*
                     """.trimIndent()
 
                     "QUESTIONS" -> """
-                        You are Arkin AI, an exam preparation tutor.
-                        Generate realistic, exam-style practice questions with detailed model answers and marking rubrics for:
+                        Generate realistic, exam-style practice questions with model answers matched to the student's requested detail level and points for:
                         Subject: ${exam.subject} ${if (exam.courseCode.isNotBlank()) "(${exam.courseCode})" else ""}
-                        
-                        ${if (customSyllabus.isNotBlank()) "Syllabus Context:\n$customSyllabus\n" else ""}
+
+                        $customInstructionsBlock
                         ${if (notesContext.isNotBlank()) "Student Notes Context:\n$notesContext\n" else ""}
-                        
+
                         Include:
                         # ❓ Exam Practice Questions & Solutions: ${exam.subject}
-                        - 3 Short Answer Questions (2-3 marks each) with precise model answers.
-                        - 2 Long / Analytical / Numerical Questions (5-10 marks each) with step-by-step solving and marking scheme.
-                        - Pro Tips on how examiners award marks and common errors.
-                        
-                        *Notice: Practice questions generated by AI. Use as an active recall tool.*
+                        - Questions tailored to the requested depth ($detailLevel) and specific points mentioned above.
+                        - Clear model answers and key marking points examiners look for.
                     """.trimIndent()
 
                     else -> """
-                        You are Arkin AI, creating a 30-minute Mock Exam for:
+                        Create a focused Mock Exam for:
                         Subject: ${exam.subject} ${if (exam.courseCode.isNotBlank()) "(${exam.courseCode})" else ""}
-                        
-                        ${if (customSyllabus.isNotBlank()) "Syllabus:\n$customSyllabus\n" else ""}
+
+                        $customInstructionsBlock
                         ${if (notesContext.isNotBlank()) "Notes:\n$notesContext\n" else ""}
-                        
+
                         Generate:
                         # 🎯 Mock Test: ${exam.subject}
-                        ### Section A: 4 Multiple Choice Questions (with Answer Key & Explanations at the end)
-                        ### Section B: 2 Analytical / Descriptive Questions
+                        ### Section A: Multiple Choice / Short Questions
+                        ### Section B: Descriptive / Analytical Questions (matched to $detailLevel detail)
                         ### Complete Answer Key & Marking Guide
-                        
-                        *Notice: AI mock exam simulator.*
                     """.trimIndent()
                 }
 
-                val aiResult = GroqHelper.analyzeDocument(prompt)
+                val systemPrompt = """
+                    You are Arkin AI, an expert exam preparation mentor for students.
+                    Strictly follow the student's requested answer depth ($detailLevel) and any specific topics or point instructions they wrote.
+                    Use clean Markdown headings and bullet points. Do NOT output HTML tags like <br> or <div>, and do NOT append unrelated follow-up sections.
+                """.trimIndent()
+
+                val maxTokens = when (detailLevel) {
+                    "Short" -> 900
+                    "Detailed" -> 2800
+                    else -> 1600
+                }
+
+                val aiResult = GroqHelper.analyzeDocument(
+                    userPrompt = prompt,
+                    maxTokens = maxTokens,
+                    systemInstructionOverride = systemPrompt
+                )
                 aiResult.onSuccess { text ->
                     aiExamPrepState.value = AiExamPrepState.Success(
                         mode = mode,
@@ -1047,6 +1322,7 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissReminderAlert() {
+        activeReminderAlert.value?.id?.let { dismissedAlertIds.add(it) }
         activeReminderAlert.value = null
     }
 
@@ -1057,6 +1333,10 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
             if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
                 FirestoreManager.saveReminder(updated)
             }
+            try {
+                AlarmScheduler.cancelNotification(getApplication(), reminder.id)
+            } catch (_: Exception) {}
+            dismissedAlertIds.add(reminder.id)
             activeReminderAlert.value = null
             showToast("Reminder marked as done! ✅")
         }
@@ -1068,6 +1348,18 @@ class ArkinViewModel(application: Application) : AndroidViewModel(application) {
             val newDue = "Today, " + SimpleDateFormat("hh:mm a", Locale.US).format(cal.time)
             val updated = reminder.copy(dueText = newDue)
             reminderDao.updateReminder(updated)
+            if (studentProfile.value?.cloudSyncEnabled == true && FirebaseAuthHelper.isUserLoggedIn) {
+                FirestoreManager.saveReminder(updated)
+            }
+            try {
+                AlarmScheduler.scheduleReminderNotification(
+                    getApplication(),
+                    updated.id,
+                    updated.title,
+                    newDue
+                )
+            } catch (_: Exception) {}
+            dismissedAlertIds.add(reminder.id)
             activeReminderAlert.value = null
             showToast("Snoozed for 10 minutes ⏱️")
         }

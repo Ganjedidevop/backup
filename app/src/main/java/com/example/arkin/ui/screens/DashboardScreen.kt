@@ -5,6 +5,8 @@ import com.example.arkin.ui.anim.slideUpEntrance
 import com.example.arkin.ui.anim.slideInFromLeft
 import com.example.arkin.ui.anim.scaleEntrance
 import com.example.arkin.ui.anim.bouncyClickable
+import com.example.arkin.ui.anim.pressScaleEffect
+import com.example.arkin.ui.anim.pulseEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -184,6 +186,7 @@ fun DashboardScreen(viewModel: ArkinViewModel) {
                     modifier = Modifier
                         .fillMaxHeight()
                         .width(300.dp)
+                        .slideInFromLeft(durationMs = 280, slideDistance = -220f)
                         .clickable(enabled = false) {},
                     shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
                     color = MaterialTheme.colorScheme.surface,
@@ -492,6 +495,7 @@ fun DashboardScreen(viewModel: ArkinViewModel) {
                         modifier = Modifier
                             .padding(top = 8.dp, end = 8.dp)
                             .size(9.dp)
+                            .pulseEffect(minScale = 0.85f, maxScale = 1.18f, durationMs = 1100)
                             .clip(CircleShape)
                             .background(Color(0xFFEF4444))
                             .border(1.5.dp, MaterialTheme.colorScheme.background, CircleShape)
@@ -538,6 +542,8 @@ fun DashboardScreen(viewModel: ArkinViewModel) {
             shadowElevation = 2.dp,
             modifier = Modifier
                 .fillMaxWidth()
+                .slideUpEntrance(durationMs = 420, delayMs = 100, slideDistance = 26f)
+                .pressScaleEffect()
                 .testTag("dashboard_doc_upload_card")
         ) {
             Row(

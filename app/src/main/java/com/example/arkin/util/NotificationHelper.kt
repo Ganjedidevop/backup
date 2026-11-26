@@ -27,20 +27,33 @@ object NotificationHelper {
         }
     }
 
+    fun canPostNotifications(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
+
     fun showReminderNotification(
         context: Context,
         notificationId: Int,
         title: String,
-        message: String
+        message: String,
+        reminderId: Long? = null
     ) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                return
-            }
+        if (!canPostNotifications(context)) {
+            return
         }
 
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
-            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+        val launchIntent = (context.packageManager.getLaunchIntentForPackage(context.packageName)
+            ?: android.content.Intent(context, com.example.MainActivity::class.java)).apply {
+            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+            if (reminderId != null) {
+                putExtra("EXTRA_REMINDER_ID", reminderId)
+            }
         }
         val pendingIntent = if (launchIntent != null) {
             val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {

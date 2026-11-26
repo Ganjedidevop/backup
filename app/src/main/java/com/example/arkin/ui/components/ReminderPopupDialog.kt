@@ -1,10 +1,18 @@
 package com.example.arkin.ui.components
 
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,6 +73,22 @@ fun ReminderPopupDialog(
         label = "scale"
     )
 
+    var visible by remember { mutableStateOf(false) }
+    val dialogScale by animateFloatAsState(
+        targetValue = if (visible) 1f else 0.90f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioLowBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "dialog_entrance_scale"
+    )
+    val dialogAlpha by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(durationMillis = 240),
+        label = "dialog_entrance_alpha"
+    )
+    LaunchedEffect(Unit) { visible = true }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -81,6 +105,11 @@ fun ReminderPopupDialog(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
                 .padding(vertical = 20.dp)
+                .graphicsLayer {
+                    scaleX = dialogScale
+                    scaleY = dialogScale
+                    alpha = dialogAlpha
+                }
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),

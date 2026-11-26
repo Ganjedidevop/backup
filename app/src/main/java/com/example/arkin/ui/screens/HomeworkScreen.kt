@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.rounded.Book
 import androidx.compose.material.icons.rounded.CalendarToday
+import androidx.compose.material.icons.rounded.CheckCircle
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import java.text.SimpleDateFormat
@@ -74,6 +75,7 @@ import com.example.arkin.data.model.HomeworkEntity
 import com.example.arkin.model.AppScreen
 import com.example.arkin.model.DocUploadType
 import com.example.arkin.ui.components.AppHeader
+import com.example.arkin.ui.components.ConfirmationDialog
 import com.example.arkin.ui.components.getCategoryColor
 import com.example.arkin.util.DocumentTextExtractor
 import com.example.arkin.util.FileViewerHelper
@@ -85,6 +87,7 @@ fun HomeworkScreen(viewModel: ArkinViewModel) {
     val context = LocalContext.current
     val homeworkList by viewModel.allHomework.collectAsState()
     var isManualAddDialogOpen by remember { mutableStateOf(false) }
+    var homeworkToComplete by remember { mutableStateOf<HomeworkEntity?>(null) }
     var initialAttachmentUri by remember { mutableStateOf<Uri?>(null) }
     var initialAttachmentName by remember { mutableStateOf<String?>(null) }
     var initialAttachmentSize by remember { mutableStateOf<String?>(null) }
@@ -286,14 +289,37 @@ fun HomeworkScreen(viewModel: ArkinViewModel) {
                     InteractiveHomeworkCard(
                         hw = hw,
                         onClick = { viewModel.openAssignmentDetail(hw) },
-                        onToggle = { viewModel.toggleHomework(hw) },
+                        onToggle = {
+                            if (!hw.isDone) {
+                                homeworkToComplete = hw
+                            } else {
+                                viewModel.toggleHomework(hw)
+                            }
+                        },
                         onOpenAttachment = {
                             FileViewerHelper.openDocument(context, hw.attachmentUri, hw.attachmentName)
-                        }
+                        },
+                        modifier = Modifier.animateItem()
                     )
                 }
             }
         }
+    }
+
+    homeworkToComplete?.let { hw ->
+        ConfirmationDialog(
+            title = "Mark Homework Completed?",
+            message = "Are you sure you have completed '${hw.title}' (${hw.subject})?",
+            confirmButtonText = "Yes, Completed",
+            dismissButtonText = "Cancel",
+            isDestructive = false,
+            icon = Icons.Rounded.CheckCircle,
+            onConfirm = {
+                viewModel.toggleHomework(hw)
+                homeworkToComplete = null
+            },
+            onDismiss = { homeworkToComplete = null }
+        )
     }
 
     if (isManualAddDialogOpen) {

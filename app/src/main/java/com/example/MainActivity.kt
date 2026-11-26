@@ -1,11 +1,14 @@
 package com.example
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 
@@ -56,15 +59,23 @@ import com.example.arkin.util.NotificationHelper
 import com.example.arkin.viewmodel.ArkinViewModel
 import com.example.ui.theme.MyApplicationTheme
 
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.isSystemInDarkTheme
 
 class MainActivity : ComponentActivity() {
+    private var activeViewModel: ArkinViewModel? = null
+    private var pendingNotificationReminderId by mutableStateOf<Long?>(null)
+
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { _ -> }
+    ) { isGranted ->
+        if (isGranted) {
+            activeViewModel?.notifyDueRemindersOnAppOpen()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,16 +86,39 @@ class MainActivity : ComponentActivity() {
         }
         NotificationHelper.createNotificationChannels(this)
         requestNotificationPermission()
+        handleReminderExtra(intent)
         enableEdgeToEdge()
         setContent {
             val viewModel: ArkinViewModel = viewModel()
+            activeViewModel = viewModel
             val profile by viewModel.studentProfile.collectAsState()
             val systemDark = isSystemInDarkTheme()
             val isDarkMode = profile?.isDarkMode ?: systemDark
 
+            val reminderIdFromNotification = pendingNotificationReminderId
+            LaunchedEffect(reminderIdFromNotification) {
+                if (reminderIdFromNotification != null) {
+                    viewModel.openReminderById(reminderIdFromNotification)
+                    pendingNotificationReminderId = null
+                }
+            }
+
             MyApplicationTheme(darkTheme = isDarkMode) {
                 MainAppContent(viewModel = viewModel)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleReminderExtra(intent)
+    }
+
+    private fun handleReminderExtra(intent: Intent?) {
+        val reminderId = intent?.getLongExtra("EXTRA_REMINDER_ID", -1L) ?: -1L
+        if (reminderId >= 0L) {
+            pendingNotificationReminderId = reminderId
         }
     }
 
@@ -150,12 +184,12 @@ fun MainAppContent(viewModel: ArkinViewModel) {
             AnimatedContent(
                 targetState = currentScreen,
                 transitionSpec = {
-                    (fadeIn(animationSpec = tween(280)) + slideInHorizontally(
-                        animationSpec = tween(280),
-                        initialOffsetX = { fullWidth -> (fullWidth * 0.08f).toInt() }
-                    )) togetherWith (fadeOut(animationSpec = tween(220)) + slideOutHorizontally(
-                        animationSpec = tween(220),
-                        targetOffsetX = { fullWidth -> -(fullWidth * 0.08f).toInt() }
+                    (fadeIn(animationSpec = tween(320, easing = FastOutSlowInEasing)) + slideInHorizontally(
+                        animationSpec = tween(320, easing = FastOutSlowInEasing),
+                        initialOffsetX = { fullWidth -> (fullWidth * 0.05f).toInt() }
+                    )) togetherWith (fadeOut(animationSpec = tween(220, easing = FastOutSlowInEasing)) + slideOutHorizontally(
+                        animationSpec = tween(220, easing = FastOutSlowInEasing),
+                        targetOffsetX = { fullWidth -> -(fullWidth * 0.05f).toInt() }
                     ))
                 },
                 label = "ScreenTransition"

@@ -36,7 +36,8 @@ data class TaskEntity(
     val dueTime: String = "5:00 PM",
     val startDate: String = "Today",
     val linkedAssignmentId: Long? = null,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val completedAt: Long? = null
 )
 
 @Entity(tableName = "homework")

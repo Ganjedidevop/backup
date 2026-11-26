@@ -36,7 +36,7 @@ import kotlinx.coroutines.launch
         VaultItemEntity::class,
         StudentProfileEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class ArkinDatabase : RoomDatabase() {
@@ -61,6 +61,12 @@ abstract class ArkinDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tasks ADD COLUMN completedAt INTEGER")
+            }
+        }
+
         fun getDatabase(context: Context): ArkinDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -68,7 +74,7 @@ abstract class ArkinDatabase : RoomDatabase() {
                     ArkinDatabase::class.java,
                     "arkin_database"
                 )
-                    .addMigrations(MIGRATION_3_4)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
                     .fallbackToDestructiveMigration(true)
                     .build()
                 INSTANCE = instance

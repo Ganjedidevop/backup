@@ -123,4 +123,45 @@ class GroqAiTest {
         assertFalse("API key should not be placeholder", key == "MY_GROQ_API_KEY")
         assertTrue("API key should start with gsk_ when configured", key.startsWith("gsk_"))
     }
+
+    @Test
+    fun testBuildRequestPayload_supportsCustomDetailDepthAndSystemOverride() {
+        val payload = GroqHelper.buildRequestPayload(
+            userPrompt = "Explain SQL Normalization with short points",
+            contextNotes = "",
+            conversationHistory = emptyList(),
+            maxTokens = 2800,
+            systemInstructionOverride = "Custom Exam Prep System Prompt"
+        )
+        assertEquals(2800, payload.getInt("max_tokens"))
+        val messages = payload.getJSONArray("messages")
+        assertEquals("Custom Exam Prep System Prompt", messages.getJSONObject(0).getString("content"))
+    }
+
+    @Test
+    fun testParseRevisionQuizResponse_parsesFencedJsonAndRejectsInvalid() {
+        val fenced = """
+            ```json
+            {
+              "question": "In Operations Research, what does the Simplex method optimize?",
+              "options": [
+                "A linear objective function subject to linear constraints",
+                "Only non-linear differential equations",
+                "Database normalization tables",
+                "HTML DOM layout trees"
+              ],
+              "correctIndex": 0,
+              "explanation": "The Simplex method solves linear programming optimization problems."
+            }
+            ```
+        """.trimIndent()
+        val parsed = GroqHelper.parseRevisionQuizResponse(fenced)
+        assertNotNull(parsed)
+        assertEquals("In Operations Research, what does the Simplex method optimize?", parsed!!.question)
+        assertEquals(4, parsed.options.size)
+        assertEquals(0, parsed.correctIndex)
+
+        val invalid = GroqHelper.parseRevisionQuizResponse("Not valid JSON")
+        assertEquals(null, invalid)
+    }
 }

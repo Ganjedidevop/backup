@@ -77,6 +77,8 @@ object BackupManager {
                     put("priority", task.priority)
                     put("dueDate", task.dueDate)
                     put("dueTime", task.dueTime)
+                    put("createdAt", task.createdAt)
+                    task.completedAt?.let { put("completedAt", it) }
                 })
             }
             put("tasks", tasksArr)
@@ -234,7 +236,9 @@ object BackupManager {
                             isCompleted = obj.optBoolean("isCompleted", false),
                             priority = obj.optString("priority", "Medium"),
                             dueDate = obj.optString("dueDate", "Today"),
-                            dueTime = obj.optString("dueTime", "05:00 PM")
+                            dueTime = obj.optString("dueTime", "05:00 PM"),
+                            createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
+                            completedAt = if (obj.has("completedAt") && !obj.isNull("completedAt")) obj.optLong("completedAt") else null
                         )
                     )
                 }

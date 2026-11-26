@@ -92,4 +92,28 @@ data class RevisionPlanItem(
     val isDone: Boolean = false
 )
 
+data class RevisionQuizQuestion(
+    val question: String,
+    val options: List<String>,
+    val correctIndex: Int,
+    val explanation: String = ""
+)
+
+sealed class RevisionQuizState {
+    object Idle : RevisionQuizState()
+    data class Loading(val taskId: String, val subject: String, val topic: String) : RevisionQuizState()
+    data class Ready(
+        val taskId: String,
+        val subject: String,
+        val topic: String,
+        val quiz: RevisionQuizQuestion
+    ) : RevisionQuizState()
+    data class Error(
+        val taskId: String,
+        val subject: String,
+        val topic: String,
+        val message: String
+    ) : RevisionQuizState()
+}
+
 

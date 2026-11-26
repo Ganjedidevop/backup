@@ -603,6 +603,12 @@ fun TaskItemRow(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val timeFormatter = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
+    val createdText = remember(task.createdAt) { timeFormatter.format(Date(task.createdAt)) }
+    val completedText = remember(task.completedAt) {
+        task.completedAt?.let { timeFormatter.format(Date(it)) }
+    }
+
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -619,7 +625,7 @@ fun TaskItemRow(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
+                verticalAlignment = Alignment.Top,
                 modifier = Modifier.weight(1f)
             ) {
                 Checkbox(
@@ -632,7 +638,7 @@ fun TaskItemRow(
                     modifier = Modifier.testTag("task_checkbox_${task.id}")
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Column {
+                Column(modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) {
                     Text(
                         text = task.title,
                         style = MaterialTheme.typography.bodyLarge,
@@ -640,12 +646,39 @@ fun TaskItemRow(
                         color = if (task.isCompleted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                         textDecoration = if (task.isCompleted) TextDecoration.LineThrough else TextDecoration.None
                     )
+                    if (task.description.isNotBlank()) {
+                        Text(
+                            text = task.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Created: $createdText",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (task.isCompleted && completedText != null) {
+                        Text(
+                            text = "Completed: $completedText",
+                            fontSize = 11.sp,
+                            color = Color(0xFF16A34A),
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
                     if (task.priority == "High") {
                         Text(
                             text = "Priority: High",
                             fontSize = 10.sp,
                             color = Color(0xFFDC2626),
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(top = 2.dp)
                         )
                     }
                 }

@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,8 +54,10 @@ import com.example.ui.theme.ArkinPrimary
 fun TodoScreen(viewModel: ArkinViewModel) {
     val tasks by viewModel.allTasks.collectAsState()
     var taskInput by remember { mutableStateOf("") }
+    var taskDescriptionInput by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf("All") } // All, Pending, Completed
     var taskToDelete by remember { mutableStateOf<TaskEntity?>(null) }
+    var taskToComplete by remember { mutableStateOf<TaskEntity?>(null) }
 
     val filteredTasks = tasks.filter {
         when (selectedFilter) {
@@ -75,52 +78,79 @@ fun TodoScreen(viewModel: ArkinViewModel) {
             onBackClick = { viewModel.goBack() }
         )
 
-        // Task input form
-        Row(
+        // Task input form (Title + Description)
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            OutlinedTextField(
-                value = taskInput,
-                onValueChange = { taskInput = it },
-                placeholder = { Text("Add a new task...") },
-                singleLine = true,
-                shape = RoundedCornerShape(18.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = ArkinPrimary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                ),
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("todo_input_field")
-            )
-
-            Surface(
-                onClick = {
-                    if (taskInput.isNotBlank()) {
-                        viewModel.addTask(taskInput)
-                        taskInput = ""
-                    }
-                },
-                shape = RoundedCornerShape(18.dp),
-                color = ArkinPrimary,
-                shadowElevation = 4.dp,
-                modifier = Modifier
-                    .size(54.dp)
-                    .testTag("todo_add_submit_button")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add Task",
-                        tint = Color.White,
-                        modifier = Modifier.size(26.dp)
-                    )
+                OutlinedTextField(
+                    value = taskInput,
+                    onValueChange = { taskInput = it },
+                    placeholder = { Text("Add a new task...") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(18.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = ArkinPrimary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("todo_input_field")
+                )
+
+                Surface(
+                    onClick = {
+                        if (taskInput.isNotBlank()) {
+                            viewModel.addTask(
+                                title = taskInput,
+                                description = taskDescriptionInput
+                            )
+                            taskInput = ""
+                            taskDescriptionInput = ""
+                        } else {
+                            viewModel.showToast("Please enter a task title")
+                        }
+                    },
+                    shape = RoundedCornerShape(18.dp),
+                    color = ArkinPrimary,
+                    shadowElevation = 4.dp,
+                    modifier = Modifier
+                        .size(54.dp)
+                        .testTag("todo_add_submit_button")
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add Task",
+                            tint = Color.White,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
                 }
             }
+
+            OutlinedTextField(
+                value = taskDescriptionInput,
+                onValueChange = { taskDescriptionInput = it },
+                placeholder = { Text("Add description (optional)...") },
+                minLines = 1,
+                maxLines = 3,
+                shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = ArkinPrimary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("todo_description_field")
+            )
         }
 
         // Filter chips
@@ -199,12 +229,35 @@ fun TodoScreen(viewModel: ArkinViewModel) {
                 items(filteredTasks, key = { it.id }) { task ->
                     TaskItemRow(
                         task = task,
-                        onToggle = { viewModel.toggleTask(task) },
-                        onDelete = { taskToDelete = task }
+                        onToggle = {
+                            if (!task.isCompleted) {
+                                taskToComplete = task
+                            } else {
+                                viewModel.toggleTask(task)
+                            }
+                        },
+                        onDelete = { taskToDelete = task },
+                        modifier = Modifier.animateItem()
                     )
                 }
             }
         }
+    }
+
+    taskToComplete?.let { task ->
+        ConfirmationDialog(
+            title = "Mark Task Done?",
+            message = "Are you sure you have completed '${task.title}'?",
+            confirmButtonText = "Yes, Done",
+            dismissButtonText = "Not Yet",
+            isDestructive = false,
+            icon = Icons.Rounded.CheckCircle,
+            onConfirm = {
+                viewModel.toggleTask(task)
+                taskToComplete = null
+            },
+            onDismiss = { taskToComplete = null }
+        )
     }
 
     taskToDelete?.let { task ->

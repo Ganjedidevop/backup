@@ -66,10 +66,19 @@ object GroqHelper {
         conversationHistory: List<Pair<String, String>>,
         modelName: String,
         apiKey: String,
-        proxyUrl: String?
+        proxyUrl: String?,
+        maxTokens: Int = 1500,
+        systemInstructionOverride: String? = null
     ): String? {
         try {
-            val jsonPayload = buildRequestPayload(userPrompt, contextNotes, conversationHistory, modelName)
+            val jsonPayload = buildRequestPayload(
+                userPrompt = userPrompt,
+                contextNotes = contextNotes,
+                conversationHistory = conversationHistory,
+                model = modelName,
+                maxTokens = maxTokens,
+                systemInstructionOverride = systemInstructionOverride
+            )
             val mediaType = "application/json; charset=utf-8".toMediaType()
             val requestBody = jsonPayload.toString().toRequestBody(mediaType)
 
@@ -173,7 +182,9 @@ object GroqHelper {
      */
     suspend fun analyzeDocument(
         userPrompt: String,
-        model: String = PRIMARY_MODEL
+        model: String = PRIMARY_MODEL,
+        maxTokens: Int = 1500,
+        systemInstructionOverride: String? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         val apiKey = getApiKey()
         val proxyUrl = backendProxyUrl
@@ -183,19 +194,19 @@ object GroqHelper {
         }
 
         // 1. Try primary model
-        val primaryResult = executeCompletionsCall(userPrompt, "", emptyList(), model, apiKey, proxyUrl)
+        val primaryResult = executeCompletionsCall(userPrompt, "", emptyList(), model, apiKey, proxyUrl, maxTokens, systemInstructionOverride)
         if (!primaryResult.isNullOrBlank()) {
             return@withContext Result.success(primaryResult)
         }
 
         // 2. Retry with fallback model
-        val fallbackResult = executeCompletionsCall(userPrompt, "", emptyList(), FALLBACK_MODEL, apiKey, proxyUrl)
+        val fallbackResult = executeCompletionsCall(userPrompt, "", emptyList(), FALLBACK_MODEL, apiKey, proxyUrl, maxTokens, systemInstructionOverride)
         if (!fallbackResult.isNullOrBlank()) {
             return@withContext Result.success(fallbackResult)
         }
 
         // 3. Retry with qwen model
-        val qwenResult = executeCompletionsCall(userPrompt, "", emptyList(), "qwen/qwen3.8-27b", apiKey, proxyUrl)
+        val qwenResult = executeCompletionsCall(userPrompt, "", emptyList(), "qwen/qwen3.8-27b", apiKey, proxyUrl, maxTokens, systemInstructionOverride)
         if (!qwenResult.isNullOrBlank()) {
             return@withContext Result.success(qwenResult)
         }
@@ -275,7 +286,9 @@ object GroqHelper {
         userPrompt: String,
         contextNotes: String,
         conversationHistory: List<Pair<String, String>>,
-        model: String = PRIMARY_MODEL
+        model: String = PRIMARY_MODEL,
+        maxTokens: Int = 1500,
+        systemInstructionOverride: String? = null
     ): JSONObject {
         val root = JSONObject()
         root.put("model", model)
@@ -283,7 +296,7 @@ object GroqHelper {
         val messagesArray = JSONArray()
 
         // 1. System Prompt
-        val systemInstruction = """
+        val systemInstruction = systemInstructionOverride ?: """
             You are Arkin AI, a smart, concise, and friendly AI study assistant for college students, powered by Groq's high-speed inference.
             
             CRITICAL INSTRUCTIONS:
@@ -328,7 +341,7 @@ object GroqHelper {
 
         root.put("messages", messagesArray)
         root.put("temperature", 0.7)
-        root.put("max_tokens", 1500)
+        root.put("max_tokens", maxTokens)
 
         return root
     }
@@ -349,6 +362,43 @@ object GroqHelper {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse Groq response JSON", e)
             ""
+        }
+    }
+
+    /**
+     * Parses a JSON multiple-choice revision verification question returned by Groq AI.
+     */
+    fun parseRevisionQuizResponse(raw: String): com.example.arkin.model.RevisionQuizQuestion? {
+        return try {
+            val cleaned = raw.trim()
+                .removePrefix("```json")
+                .removePrefix("```")
+                .removeSuffix("```")
+                .trim()
+            val start = cleaned.indexOf('{')
+            val end = cleaned.lastIndexOf('}')
+            if (start < 0 || end <= start) return null
+
+            val obj = JSONObject(cleaned.substring(start, end + 1))
+            val question = obj.optString("question", "").trim()
+            val arr = obj.optJSONArray("options") ?: return null
+            val options = mutableListOf<String>()
+            for (i in 0 until arr.length()) {
+                val opt = arr.optString(i, "").trim()
+                if (opt.isNotBlank()) options.add(opt)
+            }
+            if (question.isBlank() || options.size < 2) return null
+
+            val correctIdx = obj.optInt("correctIndex", 0).coerceIn(0, options.size - 1)
+            val explanation = obj.optString("explanation", "").trim()
+            com.example.arkin.model.RevisionQuizQuestion(
+                question = question,
+                options = options,
+                correctIndex = correctIdx,
+                explanation = explanation
+            )
+        } catch (_: Exception) {
+            null
         }
     }
 

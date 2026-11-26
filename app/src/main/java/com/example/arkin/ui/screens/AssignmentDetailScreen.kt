@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -98,6 +99,7 @@ fun AssignmentDetailScreen(viewModel: ArkinViewModel) {
     var selectedStatus by remember(hw.status) { mutableStateOf(hw.status) }
     var isPreviewMode by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showCompleteConfirmDialog by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
 
     val attachFilePicker = rememberLauncherForActivityResult(
@@ -183,8 +185,12 @@ fun AssignmentDetailScreen(viewModel: ArkinViewModel) {
                                 val isSelected = selectedStatus == st
                                 Surface(
                                     onClick = {
-                                        selectedStatus = st
-                                        viewModel.updateAssignmentStatus(hw, st)
+                                        if (st == "Completed" && !hw.isDone) {
+                                            showCompleteConfirmDialog = true
+                                        } else {
+                                            selectedStatus = st
+                                            viewModel.updateAssignmentStatus(hw, st)
+                                        }
                                     },
                                     shape = RoundedCornerShape(8.dp),
                                     color = if (isSelected) ArkinPrimary else MaterialTheme.colorScheme.surfaceVariant,
@@ -552,6 +558,23 @@ fun AssignmentDetailScreen(viewModel: ArkinViewModel) {
                 }
             }
         }
+    }
+
+    if (showCompleteConfirmDialog) {
+        ConfirmationDialog(
+            title = "Mark Homework Completed?",
+            message = "Are you sure you have completed '${if (hw.title.isNotBlank()) hw.title else hw.subject}'?",
+            confirmButtonText = "Yes, Completed",
+            dismissButtonText = "Cancel",
+            isDestructive = false,
+            icon = Icons.Rounded.CheckCircle,
+            onConfirm = {
+                showCompleteConfirmDialog = false
+                selectedStatus = "Completed"
+                viewModel.updateAssignmentStatus(hw, "Completed")
+            },
+            onDismiss = { showCompleteConfirmDialog = false }
+        )
     }
 
     if (showDeleteConfirmDialog) {

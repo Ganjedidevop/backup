@@ -165,7 +165,8 @@ object FirestoreManager {
                 "dueTime" to task.dueTime,
                 "startDate" to task.startDate,
                 "linkedAssignmentId" to task.linkedAssignmentId,
-                "createdAt" to task.createdAt
+                "createdAt" to task.createdAt,
+                "completedAt" to task.completedAt
             )
             userDoc(uid).collection("tasks").document(task.id.toString()).set(data, SetOptions.merge()).await()
             Result.success(Unit)
@@ -595,7 +596,8 @@ object FirestoreManager {
                             dueTime = doc.getString("dueTime") ?: "5:00 PM",
                             startDate = doc.getString("startDate") ?: "Today",
                             linkedAssignmentId = doc.getLong("linkedAssignmentId"),
-                            createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
+                            createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis(),
+                            completedAt = doc.getLong("completedAt")
                         )
                     } catch (e: Exception) {
                         null
